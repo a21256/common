@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import threading
 import time
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -82,22 +83,66 @@ class ListTablesResult:
     error: str = ""
 
 
+# ==================== Backward compatibility ====================
+
+_FLAT_PARAM_KEYS = frozenset({"host", "port", "user", "password", "database", "charset"})
+
+
+def _compat_config(kwargs: dict) -> ConnectionConfig:
+    """Build ConnectionConfig from legacy flat keyword arguments.
+
+    If the caller passes host/port/user/password/database/charset instead
+    of config=ConnectionConfig(...), this helper constructs the config and
+    emits a DeprecationWarning.  The flat-param style will be removed in
+    a future version.
+    """
+    present = _FLAT_PARAM_KEYS & kwargs.keys()
+    if not present:
+        raise TypeError(
+            "Missing required keyword argument 'config'. "
+            "Pass config=ConnectionConfig(...) or the legacy flat parameters "
+            "(host=, user=, password=, database=)."
+        )
+    warnings.warn(
+        "Passing host/port/user/password/database/charset as flat keyword "
+        "arguments is deprecated. Use config=ConnectionConfig(...) instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    return ConnectionConfig(
+        host=kwargs.pop("host"),
+        user=kwargs.pop("user"),
+        password=kwargs.pop("password"),
+        database=kwargs.pop("database"),
+        port=kwargs.pop("port", DEFAULT_PORT),
+        charset=kwargs.pop("charset", DEFAULT_CHARSET),
+    )
+
+
 # ==================== Core functions ====================
 
 def backup_database(
     *,
-    config: ConnectionConfig,
+    config: Optional[ConnectionConfig] = None,
     output_dir: str,
     compress: bool = False,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     mysqldump_path: str = DEFAULT_MYSQLDUMP,
     extra_args: Sequence[str] = (),
+    **kwargs,
 ) -> BackupResult:
     """Full database backup via mysqldump.
 
     Streams mysqldump output directly to file to avoid holding the
     entire dump in memory.
+
+    .. deprecated:: 0.3.0
+       Passing ``host``, ``user``, ``password``, ``database`` as flat
+       keyword arguments is deprecated.  Use ``config=ConnectionConfig(...)``
+       instead.
     """
+    if config is None:
+        config = _compat_config(kwargs)
     return _run_backup(
         config=config, tables=None, output_dir=output_dir,
         compress=compress, timeout=timeout,
@@ -107,20 +152,28 @@ def backup_database(
 
 def backup_tables(
     *,
-    config: ConnectionConfig,
+    config: Optional[ConnectionConfig] = None,
     tables: Sequence[str],
     output_dir: str,
     compress: bool = False,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     mysqldump_path: str = DEFAULT_MYSQLDUMP,
     extra_args: Sequence[str] = (),
+    **kwargs,
 ) -> BackupResult:
-    """Backup specific tables via mysqldump."""
+    """Backup specific tables via mysqldump.
+
+    .. deprecated:: 0.3.0
+       Flat connection keyword arguments are deprecated.
+       Use ``config=ConnectionConfig(...)`` instead.
+    """
+    if config is None:
+        config = _compat_config(kwargs)
     if not tables:
         return BackupResult(success=False, error="No tables specified")
 
     return _run_backup(
-        config=config, tables=list(tables), output_dir=output_dir,
+        config=config, tables=sorted(tables), output_dir=output_dir,
         compress=compress, timeout=timeout,
         mysqldump_path=mysqldump_path, extra_args=extra_args,
     )
@@ -128,17 +181,24 @@ def backup_tables(
 
 def restore_backup(
     *,
-    config: ConnectionConfig,
+    config: Optional[ConnectionConfig] = None,
     backup_file: str,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     mysql_path: str = DEFAULT_MYSQL,
     extra_args: Sequence[str] = (),
+    **kwargs,
 ) -> RestoreResult:
     """Restore a database from a .sql or .sql.gz backup file.
 
     Streams file content to mysql stdin to avoid loading the full
     backup into memory.
+
+    .. deprecated:: 0.3.0
+       Flat connection keyword arguments are deprecated.
+       Use ``config=ConnectionConfig(...)`` instead.
     """
+    if config is None:
+        config = _compat_config(kwargs)
     return _run_restore(
         config=config, backup_file=backup_file,
         timeout=timeout, mysql_path=mysql_path,
@@ -148,11 +208,12 @@ def restore_backup(
 
 def restore_tables(
     *,
-    config: ConnectionConfig,
+    config: Optional[ConnectionConfig] = None,
     backup_file: str,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     mysql_path: str = DEFAULT_MYSQL,
     extra_args: Sequence[str] = (),
+    **kwargs,
 ) -> RestoreResult:
     """Restore specific tables from a table-level backup file.
 
@@ -161,7 +222,13 @@ def restore_tables(
     tables. This function exists to make the intent explicit at call
     sites and in logs (logged as ``restore_tables`` instead of
     ``restore``).
+
+    .. deprecated:: 0.3.0
+       Flat connection keyword arguments are deprecated.
+       Use ``config=ConnectionConfig(...)`` instead.
     """
+    if config is None:
+        config = _compat_config(kwargs)
     return _run_restore(
         config=config, backup_file=backup_file,
         timeout=timeout, mysql_path=mysql_path,
@@ -171,15 +238,22 @@ def restore_tables(
 
 def list_tables(
     *,
-    config: ConnectionConfig,
+    config: Optional[ConnectionConfig] = None,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     mysql_path: str = DEFAULT_MYSQL,
+    **kwargs,
 ) -> ListTablesResult:
     """List all tables in the given database via ``SHOW TABLES``.
 
     Returns ListTablesResult with ``success=True`` and sorted table list
     on success, or ``success=False`` with error message on failure.
+
+    .. deprecated:: 0.3.0
+       Flat connection keyword arguments are deprecated.
+       Use ``config=ConnectionConfig(...)`` instead.
     """
+    if config is None:
+        config = _compat_config(kwargs)
     mysql_bin = shutil.which(mysql_path)
     if not mysql_bin:
         return ListTablesResult(

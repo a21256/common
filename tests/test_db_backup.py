@@ -94,6 +94,25 @@ class TestConnectionConfig:
             cfg.host = "other"
 
 
+# ==================== Backward compatibility ====================
+
+class TestBackwardCompat:
+    @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysqldump")
+    @patch("yumoyi_common.db_backup.subprocess.run")
+    def test_flat_params_still_work_with_warning(self, mock_run, mock_which, tmp_dir):
+        mock_run.side_effect = _mock_run_streaming()
+        with pytest.warns(DeprecationWarning, match="flat keyword"):
+            result = backup_database(
+                host="localhost", user="root", password="secret",
+                database="testdb", output_dir=tmp_dir,
+            )
+        assert result.success is True
+
+    def test_no_config_no_flat_raises_typeerror(self, tmp_dir):
+        with pytest.raises(TypeError, match="Missing required"):
+            backup_database(output_dir=tmp_dir)
+
+
 # ==================== backup_database ====================
 
 class TestBackupDatabase:
@@ -216,7 +235,7 @@ class TestBackupTables:
         )
 
         assert result.success is True
-        assert result.tables == ["users", "orders"]
+        assert result.tables == ["orders", "users"]  # sorted
         cmd = mock_run.call_args[0][0]
         assert "users" in cmd
         assert "orders" in cmd

@@ -103,6 +103,23 @@ python manage.py dbrestore /backups/mydb_20250101_120000.sql
 python manage.py dbrestore dump.sql --mysql-path /usr/local/bin/mysql
 ```
 
+## Migrating from 0.2.x
+
+In 0.3.0, all `db_backup` functions require `config=ConnectionConfig(...)` instead
+of flat `host=, user=, password=, database=` keyword arguments. The old flat style
+still works but emits a `DeprecationWarning` and will be removed in a future version.
+
+```python
+# Old (deprecated, still works with warning):
+result = backup_database(host="localhost", user="root", password="pwd",
+                         database="mydb", output_dir="/backups")
+
+# New:
+from yumoyi_common.db_backup import ConnectionConfig, backup_database
+config = ConnectionConfig(host="localhost", user="root", password="pwd", database="mydb")
+result = backup_database(config=config, output_dir="/backups")
+```
+
 ## Dev
 
 ```bash
