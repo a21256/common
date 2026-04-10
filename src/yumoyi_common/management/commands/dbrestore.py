@@ -2,6 +2,7 @@
 
 from django.core.management.base import BaseCommand, CommandError
 
+from yumoyi_common.db_backup import DEFAULT_MYSQL
 from yumoyi_common.django_db_backup import restore_to_current_database
 
 
@@ -18,8 +19,8 @@ class Command(BaseCommand):
             help="Django database alias (default: 'default')",
         )
         parser.add_argument(
-            "--mysql-path", default="mysql",
-            help="Path to mysql binary (default: 'mysql' from PATH)",
+            "--mysql-path", default=DEFAULT_MYSQL,
+            help=f"Path to mysql binary (default: '{DEFAULT_MYSQL}' from PATH)",
         )
 
     def handle(self, *args, **options):

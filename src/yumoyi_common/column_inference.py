@@ -13,8 +13,8 @@ Usage
     from yumoyi_common.column_inference import FieldSpec, infer_columns, is_numeric, is_date_like
 
     fields = [
-        FieldSpec("name", required=True, keywords=("姓名", "Name"), format_test=None),
-        FieldSpec("amount", required=False, keywords=("金额", "Amount"), format_test=is_numeric),
+        FieldSpec("name", required=True, keywords=("Name", "Full Name"), format_test=None),
+        FieldSpec("amount", required=False, keywords=("Amount", "Total"), format_test=is_numeric),
     ]
     mapping = infer_columns(ws, fields)
     # mapping = {"name": 1, "amount": 3}  (1-based column indices)

@@ -2,6 +2,7 @@
 
 from django.core.management.base import BaseCommand, CommandError
 
+from yumoyi_common.db_backup import DEFAULT_MYSQL, DEFAULT_MYSQLDUMP
 from yumoyi_common.django_db_backup import (
     backup_current_database,
     cleanup_current_database_backups,
@@ -38,12 +39,12 @@ class Command(BaseCommand):
             help="List all tables in the database and exit (no backup)",
         )
         parser.add_argument(
-            "--mysqldump-path", default="mysqldump",
-            help="Path to mysqldump binary (default: 'mysqldump' from PATH)",
+            "--mysqldump-path", default=DEFAULT_MYSQLDUMP,
+            help=f"Path to mysqldump binary (default: '{DEFAULT_MYSQLDUMP}' from PATH)",
         )
         parser.add_argument(
-            "--mysql-path", default="mysql",
-            help="Path to mysql binary, used by --list-tables (default: 'mysql' from PATH)",
+            "--mysql-path", default=DEFAULT_MYSQL,
+            help=f"Path to mysql binary, used by --list-tables (default: '{DEFAULT_MYSQL}' from PATH)",
         )
 
     def handle(self, *args, **options):
