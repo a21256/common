@@ -33,6 +33,11 @@ TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
 MAX_TABLES_IN_FILENAME = 3
 STREAM_CHUNK_SIZE = 16 * 1024 * 1024  # 16 MB
 
+EXT_SQL = ".sql"
+EXT_SQL_GZ = ".sql.gz"
+MYSQL_PWD_ENV = "MYSQL_PWD"
+DEFAULT_DUMP_FLAGS = ("--single-transaction", "--routines", "--triggers")
+
 
 # ==================== Config & Result dataclasses ====================
 
@@ -192,7 +197,7 @@ def list_tables(
         "-e", "SHOW TABLES",
         config.database,
     ]
-    env = {**os.environ, "MYSQL_PWD": config.password}
+    env = {**os.environ, MYSQL_PWD_ENV: config.password}
 
     try:
         proc = subprocess.run(
@@ -249,7 +254,7 @@ def cleanup_old_backups(
         candidates_iter = (
             f for f in dir_path.iterdir()
             if f.name.startswith(boundary)
-            and (f.suffix == ".sql" or f.name.endswith(".sql.gz"))
+            and (f.suffix == EXT_SQL or f.name.endswith(EXT_SQL_GZ))
         )
 
     candidates = sorted(
@@ -293,7 +298,7 @@ def _table_suffix(tables: Optional[List[str]]) -> str:
 
 def _is_gzipped(path: Path) -> bool:
     """Check if path is a gzip-compressed SQL file (.sql.gz only)."""
-    return path.name.endswith(".sql.gz")
+    return path.name.endswith(EXT_SQL_GZ)
 
 
 def _stream_with_timeout(src, dst, timeout: float) -> None:
@@ -379,7 +384,7 @@ def _run_backup(
 
     timestamp = datetime.now().strftime(TIMESTAMP_FORMAT)
     suffix = _table_suffix(tables)
-    ext = ".sql.gz" if compress else ".sql"
+    ext = EXT_SQL_GZ if compress else EXT_SQL
     filename = f"{config.database}{suffix}_{timestamp}{ext}"
     file_path = out_dir / filename
 
@@ -389,16 +394,14 @@ def _run_backup(
         f"--port={config.port}",
         f"--user={config.user}",
         f"--default-character-set={config.charset}",
-        "--single-transaction",
-        "--routines",
-        "--triggers",
+        *DEFAULT_DUMP_FLAGS,
         *extra_args,
         config.database,
     ]
     if tables:
         cmd.extend(tables)
 
-    env = {**os.environ, "MYSQL_PWD": config.password}
+    env = {**os.environ, MYSQL_PWD_ENV: config.password}
 
     start = time.monotonic()
     try:
@@ -488,7 +491,7 @@ def _run_restore(
         *extra_args,
         config.database,
     ]
-    env = {**os.environ, "MYSQL_PWD": config.password}
+    env = {**os.environ, MYSQL_PWD_ENV: config.password}
 
     is_gz = _is_gzipped(backup_path)
 

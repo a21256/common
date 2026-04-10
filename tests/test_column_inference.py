@@ -19,6 +19,16 @@ from yumoyi_common.column_inference import (
     is_numeric,
 )
 
+from testdata.column_inference_zh import (
+    HEADER_PRODUCT_NAME, HEADER_QTY, HEADER_DATE, HEADER_AMOUNT,
+    HEADER_REMARK, HEADER_PRICE, HEADER_PRODUCT_CODE_LONG,
+    HEADER_PRODUCT_CODE, HEADER_CODE, HEADER_COL_A, HEADER_COL_B,
+    KW_PRODUCT_NAME, KW_QTY, KW_DATE, KW_AMOUNT, KW_CODE, KW_PRICE, KW_NAME,
+    CELL_APPLE, CELL_BANANA, CELL_ORANGE, CELL_NON_NUMERIC_TEXT,
+    NORMALIZE_INPUT, NORMALIZE_EXPECTED,
+    FIELDSPEC_KEYWORDS,
+)
+
 
 # ============================================================
 # _cell_to_str
@@ -53,7 +63,7 @@ class TestNormalizeHeader:
         assert _normalize_header(None) == ""
 
     def test_chinese_with_spaces(self):
-        assert _normalize_header("  商 品 名 称  ") == "商品名称"
+        assert _normalize_header(NORMALIZE_INPUT) == NORMALIZE_EXPECTED
 
     def test_english_case(self):
         assert _normalize_header("  Product Name  ") == "productname"
@@ -107,7 +117,6 @@ class TestIsDateLike:
         assert is_date_like("2024/1/15") is True
 
     def test_excel_serial_number(self):
-        # 45000 is within the 40000-50000 range for Excel dates
         assert is_date_like(45000) is True
 
     def test_non_date(self):
@@ -124,7 +133,6 @@ class TestIsDateLike:
         assert is_date_like(False) is False
 
     def test_custom_serial_range(self):
-        # 100 is outside default range but inside a custom range
         assert is_date_like(100) is False
         assert is_date_like(100, serial_range=(50, 200)) is True
 
@@ -149,13 +157,13 @@ class TestFieldSpec:
         fs = FieldSpec(
             "price",
             required=True,
-            keywords=("价格", "Price"),
+            keywords=FIELDSPEC_KEYWORDS,
             format_test=is_numeric,
             priority=10,
         )
         assert fs.name == "price"
         assert fs.required is True
-        assert fs.keywords == ("价格", "Price")
+        assert fs.keywords == FIELDSPEC_KEYWORDS
         assert fs.format_test is is_numeric
         assert fs.priority == 10
 
@@ -180,17 +188,17 @@ class TestInferColumns:
     def test_full_inference(self):
         """Headers + data -> correct mapping."""
         ws = _make_ws(
-            ["商品名称", "数量", "日期"],
+            [HEADER_PRODUCT_NAME, HEADER_QTY, HEADER_DATE],
             [
-                ["苹果", 10, "2024-01-01"],
-                ["香蕉", 20, "2024-02-01"],
-                ["橙子", 30, "2024-03-01"],
+                [CELL_APPLE, 10, "2024-01-01"],
+                [CELL_BANANA, 20, "2024-02-01"],
+                [CELL_ORANGE, 30, "2024-03-01"],
             ],
         )
         specs = [
-            FieldSpec("name", keywords=("商品名称", "名称"), priority=1),
-            FieldSpec("qty", keywords=("数量",), format_test=is_numeric, priority=0),
-            FieldSpec("date", keywords=("日期",), format_test=is_date_like, priority=0),
+            FieldSpec("name", keywords=KW_PRODUCT_NAME, priority=1),
+            FieldSpec("qty", keywords=KW_QTY, format_test=is_numeric, priority=0),
+            FieldSpec("date", keywords=KW_DATE, format_test=is_date_like, priority=0),
         ]
         result = infer_columns(ws, specs)
         assert result["name"] == 1
@@ -201,46 +209,44 @@ class TestInferColumns:
         """Empty worksheet -> all None."""
         wb = Workbook()
         ws = wb.active
-        specs = [FieldSpec("name", required=True, keywords=("名称",))]
+        specs = [FieldSpec("name", required=True, keywords=KW_NAME)]
         result = infer_columns(ws, specs)
         assert result["name"] is None
 
     def test_required_field_unmapped(self):
         """Required field not found -> value is None (caller decides what to do)."""
-        ws = _make_ws(["A列", "B列"], [["x", "y"]])
-        specs = [FieldSpec("code", required=True, keywords=("编码",))]
+        ws = _make_ws([HEADER_COL_A, HEADER_COL_B], [["x", "y"]])
+        specs = [FieldSpec("code", required=True, keywords=KW_CODE)]
         result = infer_columns(ws, specs)
         assert result["code"] is None
 
     def test_format_beats_keyword(self):
-        """Format match score (100) > keyword contains score (50)."""
-        # Col 1: header says "金额" but data is text
-        # Col 2: header says "备注" but data is all numbers
+        """Format match score (100) > keyword exact score (80)."""
+        # Col 1: header matches keyword but data is text
+        # Col 2: header doesn't match but data is all numbers
         ws = _make_ws(
-            ["金额", "备注"],
+            [HEADER_AMOUNT, HEADER_REMARK],
             [
-                ["非数字文本", 100],
-                ["非数字文本", 200],
-                ["非数字文本", 300],
+                [CELL_NON_NUMERIC_TEXT, 100],
+                [CELL_NON_NUMERIC_TEXT, 200],
+                [CELL_NON_NUMERIC_TEXT, 300],
             ],
         )
         specs = [
             FieldSpec(
                 "amount",
-                keywords=("金额",),
+                keywords=KW_AMOUNT,
                 format_test=is_numeric,
                 priority=0,
             ),
         ]
         result = infer_columns(ws, specs)
-        # Col 1 gets keyword exact (80), col 2 gets format (100) + no keyword
-        # 100 > 80, so amount should map to col 2
         assert result["amount"] == 2
 
     def test_no_duplicate_column_assignment(self):
         """Two fields competing for the same column -> higher priority wins."""
         ws = _make_ws(
-            ["价格"],
+            [HEADER_PRICE],
             [
                 [99.9],
                 [88.8],
@@ -248,26 +254,24 @@ class TestInferColumns:
             ],
         )
         specs = [
-            FieldSpec("cost", keywords=("价格",), format_test=is_numeric, priority=10),
-            FieldSpec("price", keywords=("价格",), format_test=is_numeric, priority=0),
+            FieldSpec("cost", keywords=KW_PRICE, format_test=is_numeric, priority=10),
+            FieldSpec("price", keywords=KW_PRICE, format_test=is_numeric, priority=0),
         ]
         result = infer_columns(ws, specs)
-        # cost has higher priority, gets col 1
         assert result["cost"] == 1
-        # price cannot reuse col 1
         assert result["price"] is None
 
     def test_keyword_contains_match(self):
         """Partial keyword match still works."""
-        ws = _make_ws(["产品编码信息"], [["ABC123"]])
-        specs = [FieldSpec("code", keywords=("编码",))]
+        ws = _make_ws([HEADER_PRODUCT_CODE_LONG], [["ABC123"]])
+        specs = [FieldSpec("code", keywords=KW_CODE)]
         result = infer_columns(ws, specs)
         assert result["code"] == 1
 
     def test_keyword_exact_beats_contains(self):
         """Exact keyword match (80) beats contains match (50)."""
-        ws = _make_ws(["产品编码", "编码"], [["ABC", "DEF"]])
-        specs = [FieldSpec("code", keywords=("编码",))]
+        ws = _make_ws([HEADER_PRODUCT_CODE, HEADER_CODE], [["ABC", "DEF"]])
+        specs = [FieldSpec("code", keywords=KW_CODE)]
         result = infer_columns(ws, specs)
-        # Col 2 header is exact "编码", col 1 only contains it
+        # Col 2 header is exact match, col 1 only contains the keyword
         assert result["code"] == 2

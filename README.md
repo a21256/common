@@ -35,9 +35,9 @@ yumoyi-common @ git+https://github.com/a21256/common.git
 from yumoyi_common.column_inference import FieldSpec, infer_columns, is_numeric, is_date_like
 
 fields = [
-    FieldSpec("name", required=True, keywords=("姓名", "Name")),
-    FieldSpec("amount", keywords=("金额",), format_test=is_numeric),
-    FieldSpec("date", keywords=("日期",), format_test=is_date_like),
+    FieldSpec("name", required=True, keywords=("Name", "Full Name")),
+    FieldSpec("amount", keywords=("Amount", "Total"), format_test=is_numeric),
+    FieldSpec("date", keywords=("Date", "Order Date"), format_test=is_date_like),
 ]
 mapping = infer_columns(ws, fields)
 # mapping = {"name": 1, "amount": 3, "date": 4}  (1-based column indices)

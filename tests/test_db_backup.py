@@ -17,6 +17,7 @@ from yumoyi_common.db_backup import (
     BackupResult,
     RestoreResult,
     ListTablesResult,
+    MYSQL_PWD_ENV,
     backup_database,
     backup_tables,
     restore_backup,
@@ -176,7 +177,7 @@ class TestBackupDatabase:
 
         cmd = mock_run.call_args[0][0]
         assert all("secret" not in arg for arg in cmd)
-        assert mock_run.call_args[1]["env"]["MYSQL_PWD"] == "secret"
+        assert mock_run.call_args[1]["env"][MYSQL_PWD_ENV] == "secret"
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysqldump")
     @patch("yumoyi_common.db_backup.subprocess.run")
@@ -333,7 +334,7 @@ class TestRestoreBackup:
         restore_backup(config=CFG, backup_file=str(backup))
 
         env = mock_run.call_args[1]["env"]
-        assert env["MYSQL_PWD"] == "secret"
+        assert env[MYSQL_PWD_ENV] == "secret"
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
     @patch("yumoyi_common.db_backup.subprocess.run")
@@ -607,7 +608,7 @@ class TestListTables:
 
         cmd = mock_run.call_args[0][0]
         assert all("secret" not in arg for arg in cmd)
-        assert mock_run.call_args[1]["env"]["MYSQL_PWD"] == "secret"
+        assert mock_run.call_args[1]["env"][MYSQL_PWD_ENV] == "secret"
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
     @patch("yumoyi_common.db_backup.subprocess.run")
