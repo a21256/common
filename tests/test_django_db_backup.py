@@ -218,6 +218,47 @@ class TestListCurrentDatabaseTables:
 
 # ==================== Management command: dbbackup ====================
 
+class TestDbbackupArgparse:
+    """Validate that argparse definitions match what handle() expects."""
+
+    def test_backup_flags_parsed(self):
+        from yumoyi_common.management.commands.dbbackup import Command
+        parser = Command().create_parser("manage.py", "dbbackup")
+        opts = vars(parser.parse_args([
+            "--output-dir", "/backups",
+            "--mysqldump-path", "/usr/local/bin/mysqldump",
+            "--mysql-path", "/usr/local/bin/mysql",
+            "--compress",
+            "--cleanup", "5",
+        ]))
+        assert opts["output_dir"] == "/backups"
+        assert opts["mysqldump_path"] == "/usr/local/bin/mysqldump"
+        assert opts["mysql_path"] == "/usr/local/bin/mysql"
+        assert opts["compress"] is True
+        assert opts["cleanup"] == 5
+
+    def test_list_tables_flag_parsed(self):
+        from yumoyi_common.management.commands.dbbackup import Command
+        parser = Command().create_parser("manage.py", "dbbackup")
+        opts = vars(parser.parse_args(["--list-tables"]))
+        assert opts["list_tables"] is True
+        assert opts["output_dir"] is None  # not required for --list-tables
+
+
+class TestDrestoreArgparse:
+    """Validate that argparse definitions match what handle() expects."""
+
+    def test_restore_flags_parsed(self):
+        from yumoyi_common.management.commands.dbrestore import Command
+        parser = Command().create_parser("manage.py", "dbrestore")
+        opts = vars(parser.parse_args([
+            "/backups/dump.sql",
+            "--mysql-path", "/usr/local/bin/mysql",
+        ]))
+        assert opts["backup_file"] == "/backups/dump.sql"
+        assert opts["mysql_path"] == "/usr/local/bin/mysql"
+
+
 class TestDbbackupCommand:
     @patch("yumoyi_common.management.commands.dbbackup.list_current_database_tables")
     def test_list_tables_success(self, mock_list):

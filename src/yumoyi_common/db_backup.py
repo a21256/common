@@ -1,7 +1,7 @@
 """
 Database backup/restore utilities using mysqldump/mysql CLI.
 
-Pure Python — no Django dependency. Connection parameters are passed
+Pure Python -- no Django dependency. Connection parameters are passed
 via ConnectionConfig so this module can be used in any Python project.
 """
 
@@ -76,7 +76,7 @@ class RestoreResult:
 
 @dataclass
 class ListTablesResult:
-    """Result of list_tables — distinguishes empty database from error."""
+    """Result of list_tables -- distinguishes empty database from error."""
     success: bool
     tables: List[str] = field(default_factory=list)
     error: str = ""
@@ -156,7 +156,7 @@ def restore_tables(
 ) -> RestoreResult:
     """Restore specific tables from a table-level backup file.
 
-    Functionally identical to restore_backup() — a mysqldump file
+    Functionally identical to restore_backup() -- a mysqldump file
     produced by backup_tables() already contains only the selected
     tables. This function exists to make the intent explicit at call
     sites and in logs (logged as ``restore_tables`` instead of
@@ -302,7 +302,7 @@ def _is_gzipped(path: Path) -> bool:
 
 
 def _stream_with_timeout(src, dst, timeout: float) -> None:
-    """Copy *src* → *dst* in a daemon thread with a hard timeout.
+    """Copy *src* -> *dst* in a daemon thread with a hard timeout.
 
     Unlike a simple loop-with-check, this enforces the deadline even
     when a single ``read()`` or ``write()`` call blocks (e.g. because
