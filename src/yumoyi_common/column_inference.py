@@ -23,16 +23,23 @@ Usage
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+# openpyxl type for IDE hints (not imported at runtime to stay dependency-light)
+try:
+    from openpyxl.worksheet.worksheet import Worksheet
+except ImportError:  # pragma: no cover
+    Worksheet = Any  # type: ignore[assignment,misc]
 
 
 # ============================================================
 # FieldSpec definition
 # ============================================================
 
+@dataclass(frozen=True)
 class FieldSpec:
-    """
-    Describes how to recognize a logical field in an Excel column.
+    """Describes how to recognize a logical field in an Excel column.
 
     Parameters
     ----------
@@ -43,21 +50,11 @@ class FieldSpec:
                   looks like this field. Called on sampled data rows, not headers.
     priority : higher = this field picks its column first when competing
     """
-
-    def __init__(
-        self,
-        name: str,
-        *,
-        required: bool = False,
-        keywords: tuple = (),
-        format_test: Optional[Callable[[Any], bool]] = None,
-        priority: int = 0,
-    ):
-        self.name = name
-        self.required = required
-        self.keywords = keywords
-        self.format_test = format_test
-        self.priority = priority
+    name: str
+    required: bool = False
+    keywords: Tuple[str, ...] = ()
+    format_test: Optional[Callable[[Any], bool]] = field(default=None, repr=False)
+    priority: int = 0
 
 
 # ============================================================
@@ -150,7 +147,7 @@ def is_date_like(
 # ============================================================
 
 def infer_columns(
-    ws,
+    ws: Worksheet,
     field_specs: List[FieldSpec],
     header_row: int = 1,
     data_start_row: int = 2,

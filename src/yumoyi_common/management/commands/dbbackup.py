@@ -37,11 +37,20 @@ class Command(BaseCommand):
             "--list-tables", action="store_true", default=False,
             help="List all tables in the database and exit (no backup)",
         )
+        parser.add_argument(
+            "--mysqldump-path", default="mysqldump",
+            help="Path to mysqldump binary (default: 'mysqldump' from PATH)",
+        )
+        parser.add_argument(
+            "--mysql-path", default="mysql",
+            help="Path to mysql binary, used by --list-tables (default: 'mysql' from PATH)",
+        )
 
     def handle(self, *args, **options):
         if options["list_tables"]:
             result = list_current_database_tables(
                 db_alias=options["database"],
+                mysql_path=options["mysql_path"],
             )
             if not result.success:
                 raise CommandError(f"Failed to list tables: {result.error}")
@@ -61,6 +70,7 @@ class Command(BaseCommand):
             tables=options["tables"],
             compress=options["compress"],
             db_alias=options["database"],
+            mysqldump_path=options["mysqldump_path"],
         )
 
         if not result.success:

@@ -17,11 +17,16 @@ class Command(BaseCommand):
             "--database", default="default",
             help="Django database alias (default: 'default')",
         )
+        parser.add_argument(
+            "--mysql-path", default="mysql",
+            help="Path to mysql binary (default: 'mysql' from PATH)",
+        )
 
     def handle(self, *args, **options):
         result = restore_to_current_database(
             backup_file=options["backup_file"],
             db_alias=options["database"],
+            mysql_path=options["mysql_path"],
         )
 
         if not result.success:

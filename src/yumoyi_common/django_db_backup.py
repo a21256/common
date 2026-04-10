@@ -28,6 +28,8 @@ from .db_backup import (
     list_tables,
     cleanup_old_backups,
     DEFAULT_KEEP,
+    DEFAULT_MYSQL,
+    DEFAULT_MYSQLDUMP,
     DEFAULT_PORT,
     DEFAULT_CHARSET,
     DEFAULT_TIMEOUT_SECONDS,
@@ -84,6 +86,7 @@ def backup_current_database(
     compress: bool = False,
     db_alias: str = "default",
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    mysqldump_path: str = DEFAULT_MYSQLDUMP,
     extra_args: Sequence[str] = (),
 ) -> BackupResult:
     """Backup the current Django database (full or specific tables).
@@ -98,13 +101,15 @@ def backup_current_database(
         result = backup_tables(
             config=config, tables=tables,
             output_dir=output_dir, compress=compress,
-            timeout=timeout, extra_args=extra_args,
+            timeout=timeout, mysqldump_path=mysqldump_path,
+            extra_args=extra_args,
         )
     else:
         result = backup_database(
             config=config,
             output_dir=output_dir, compress=compress,
-            timeout=timeout, extra_args=extra_args,
+            timeout=timeout, mysqldump_path=mysqldump_path,
+            extra_args=extra_args,
         )
 
     if result.success and migration_state:
@@ -119,6 +124,7 @@ def restore_to_current_database(
     backup_file: str,
     db_alias: str = "default",
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    mysql_path: str = DEFAULT_MYSQL,
     extra_args: Sequence[str] = (),
 ) -> RestoreResult:
     """Restore a backup file to the current Django database.
@@ -128,7 +134,8 @@ def restore_to_current_database(
     config = _get_connection_config(db_alias)
     return restore_backup(
         config=config, backup_file=backup_file,
-        timeout=timeout, extra_args=extra_args,
+        timeout=timeout, mysql_path=mysql_path,
+        extra_args=extra_args,
     )
 
 
@@ -152,6 +159,7 @@ def restore_tables_to_current_database(
     backup_file: str,
     db_alias: str = "default",
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
+    mysql_path: str = DEFAULT_MYSQL,
     extra_args: Sequence[str] = (),
 ) -> RestoreResult:
     """Restore a table-level backup to the current Django database.
@@ -161,15 +169,19 @@ def restore_tables_to_current_database(
     config = _get_connection_config(db_alias)
     return restore_tables(
         config=config, backup_file=backup_file,
-        timeout=timeout, extra_args=extra_args,
+        timeout=timeout, mysql_path=mysql_path,
+        extra_args=extra_args,
     )
 
 
-def list_current_database_tables(db_alias: str = "default") -> ListTablesResult:
+def list_current_database_tables(
+    db_alias: str = "default",
+    mysql_path: str = DEFAULT_MYSQL,
+) -> ListTablesResult:
     """List all tables in the current Django database.
 
     Automatically reads connection parameters from settings.DATABASES.
     Returns ListTablesResult with success flag and table list.
     """
     config = _get_connection_config(db_alias)
-    return list_tables(config=config)
+    return list_tables(config=config, mysql_path=mysql_path)

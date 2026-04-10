@@ -232,6 +232,7 @@ class TestDbbackupCommand:
         cmd.handle(
             list_tables=True, database="default",
             output_dir=None, tables=None, compress=False, cleanup=0,
+            mysqldump_path="mysqldump", mysql_path="mysql",
         )
 
         output = out.getvalue()
@@ -254,6 +255,7 @@ class TestDbbackupCommand:
             cmd.handle(
                 list_tables=True, database="default",
                 output_dir=None, tables=None, compress=False, cleanup=0,
+                mysqldump_path="mysqldump", mysql_path="mysql",
             )
 
     @patch("yumoyi_common.management.commands.dbbackup.backup_current_database")
@@ -271,6 +273,7 @@ class TestDbbackupCommand:
         cmd.handle(
             list_tables=False, database="default",
             output_dir="/backups", tables=None, compress=False, cleanup=0,
+            mysqldump_path="mysqldump", mysql_path="mysql",
         )
 
         output = out.getvalue()
@@ -292,6 +295,7 @@ class TestDbbackupCommand:
             cmd.handle(
                 list_tables=False, database="default",
                 output_dir="/backups", tables=None, compress=False, cleanup=0,
+                mysqldump_path="mysqldump", mysql_path="mysql",
             )
 
     def test_missing_output_dir_raises(self):
@@ -323,6 +327,7 @@ class TestDbbackupCommand:
         cmd.handle(
             list_tables=False, database="default",
             output_dir="/backups", tables=None, compress=False, cleanup=5,
+            mysqldump_path="mysqldump", mysql_path="mysql",
         )
 
         mock_cleanup.assert_called_once()
@@ -341,7 +346,7 @@ class TestDrestoreCommand:
         cmd = Command(stdout=out)
         cmd.style.SUCCESS = lambda x: x
 
-        cmd.handle(backup_file="/backups/test.sql", database="default")
+        cmd.handle(backup_file="/backups/test.sql", database="default", mysql_path="mysql")
 
         assert "2.0s" in out.getvalue()
 
@@ -357,4 +362,4 @@ class TestDrestoreCommand:
         cmd = Command(stdout=out)
 
         with pytest.raises(CommandError, match="Table doesn't exist"):
-            cmd.handle(backup_file="/backups/test.sql", database="default")
+            cmd.handle(backup_file="/backups/test.sql", database="default", mysql_path="mysql")
