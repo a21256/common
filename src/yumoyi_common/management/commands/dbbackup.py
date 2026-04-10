@@ -82,6 +82,12 @@ class Command(BaseCommand):
             f"({result.file_size} bytes, {result.duration:.1f}s)"
         ))
 
+        if result.metadata:
+            m = result.metadata
+            self.stdout.write(f"  Tables: {m.table_count}")
+            for ts in m.table_stats:
+                self.stdout.write(f"    {ts.name:<40s} {ts.row_count:>10,} rows")
+
         if options["cleanup"] > 0:
             deleted = cleanup_current_database_backups(
                 output_dir=options["output_dir"],

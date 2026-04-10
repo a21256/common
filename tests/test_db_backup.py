@@ -15,6 +15,8 @@ import pytest
 from yumoyi_common.db_backup import (
     ConnectionConfig,
     BackupResult,
+    BackupMetadata,
+    TableStats,
     RestoreResult,
     ListTablesResult,
     MYSQL_PWD_ENV,
@@ -26,6 +28,7 @@ from yumoyi_common.db_backup import (
     cleanup_old_backups,
     _table_suffix,
     _is_gzipped,
+    _collect_metadata,
 )
 
 
@@ -194,9 +197,11 @@ class TestBackupDatabase:
         mock_run.side_effect = _mock_run_streaming()
         backup_database(config=CFG, output_dir=tmp_dir)
 
-        cmd = mock_run.call_args[0][0]
+        # First call is mysqldump; subsequent calls are metadata collection
+        dump_call = mock_run.call_args_list[0]
+        cmd = dump_call[0][0]
         assert all("secret" not in arg for arg in cmd)
-        assert mock_run.call_args[1]["env"][MYSQL_PWD_ENV] == "secret"
+        assert dump_call[1]["env"][MYSQL_PWD_ENV] == "secret"
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysqldump")
     @patch("yumoyi_common.db_backup.subprocess.run")
@@ -207,7 +212,7 @@ class TestBackupDatabase:
             extra_args=["--column-statistics=0", "--set-gtid-purged=OFF"],
         )
 
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_run.call_args_list[0][0][0]
         assert "--column-statistics=0" in cmd
         assert "--set-gtid-purged=OFF" in cmd
 
@@ -218,9 +223,9 @@ class TestBackupDatabase:
         mock_run.side_effect = _mock_run_streaming()
         backup_database(config=CFG, output_dir=tmp_dir)
 
-        call_kwargs = mock_run.call_args[1]
-        assert "stdout" in call_kwargs
-        assert hasattr(call_kwargs["stdout"], "write")  # real file object
+        dump_kwargs = mock_run.call_args_list[0][1]
+        assert "stdout" in dump_kwargs
+        assert hasattr(dump_kwargs["stdout"], "write")
 
 
 # ==================== backup_tables ====================
@@ -236,7 +241,7 @@ class TestBackupTables:
 
         assert result.success is True
         assert result.tables == ["orders", "users"]  # sorted
-        cmd = mock_run.call_args[0][0]
+        cmd = mock_run.call_args_list[0][0][0]
         assert "users" in cmd
         assert "orders" in cmd
 
@@ -651,3 +656,106 @@ class TestListTablesResult:
         assert ok_empty.error == ""
         assert err.success is False
         assert err.error == "Connection refused"
+
+
+# ==================== _collect_metadata ====================
+
+class TestCollectMetadata:
+    @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
+    @patch("yumoyi_common.db_backup.subprocess.run")
+    def test_full_backup_metadata(self, mock_run, mock_which):
+        """Full backup (tables=None): row counts for all tables, no DDL."""
+        mock_run.return_value = _mock_proc(
+            returncode=0,
+            stdout=b"orders\t1234\nproducts\t567\nusers\t89\n",
+        )
+
+        meta = _collect_metadata(CFG, tables=None, mysql_path="mysql", timeout=30)
+
+        assert meta is not None
+        assert meta.table_count == 3
+        assert meta.table_stats[0].name == "orders"
+        assert meta.table_stats[0].row_count == 1234
+        assert meta.table_stats[0].ddl == ""
+        assert meta.table_stats[2].name == "users"
+        assert meta.table_stats[2].row_count == 89
+
+    @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
+    @patch("yumoyi_common.db_backup.subprocess.run")
+    def test_table_backup_metadata_with_ddl(self, mock_run, mock_which):
+        """Table backup: row counts + DDL for specified tables."""
+        # First call: row counts; second call: DDL for 'users'
+        mock_run.side_effect = [
+            _mock_proc(returncode=0, stdout=b"users\t89\n"),
+            _mock_proc(returncode=0, stdout=b"users\tCREATE TABLE `users` (id INT)\n"),
+        ]
+
+        meta = _collect_metadata(
+            CFG, tables=["users"], mysql_path="mysql", timeout=30,
+        )
+
+        assert meta is not None
+        assert meta.table_count == 1
+        assert meta.table_stats[0].name == "users"
+        assert meta.table_stats[0].row_count == 89
+        assert "CREATE TABLE" in meta.table_stats[0].ddl
+
+    @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
+    @patch("yumoyi_common.db_backup.subprocess.run")
+    def test_metadata_failure_returns_none(self, mock_run, mock_which):
+        """MySQL error during metadata collection -> None, no crash."""
+        mock_run.return_value = _mock_proc(
+            returncode=1, stderr=b"Access denied",
+        )
+
+        meta = _collect_metadata(CFG, tables=None, mysql_path="mysql", timeout=30)
+        assert meta is None
+
+    @patch("yumoyi_common.db_backup.shutil.which", return_value=None)
+    def test_mysql_not_found_returns_none(self, mock_which):
+        meta = _collect_metadata(CFG, tables=None, mysql_path="mysql", timeout=30)
+        assert meta is None
+
+    @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
+    @patch("yumoyi_common.db_backup.subprocess.run")
+    def test_metadata_wired_into_backup(self, mock_run, mock_which, tmp_dir):
+        """backup_database() populates result.metadata on success."""
+        # Two calls: 1st for mysqldump (subprocess.run with stdout=file),
+        # 2nd for metadata (subprocess.run with capture_output)
+        mock_run.side_effect = [
+            # mysqldump call
+            _mock_run_streaming()(["fake"], stdout=None),
+            # metadata call (row counts)
+            _mock_proc(returncode=0, stdout=b"t1\t100\nt2\t200\n"),
+        ]
+        # Need to re-patch for the streaming side_effect
+        mock_run.side_effect = None
+        call_count = [0]
+        def side_effect(cmd, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # mysqldump: write to stdout file
+                target = kwargs.get("stdout")
+                if target and hasattr(target, "write"):
+                    target.write(b"-- dump")
+                proc = MagicMock()
+                proc.returncode = 0
+                proc.stderr = b""
+                return proc
+            else:
+                # metadata query
+                proc = MagicMock()
+                proc.returncode = 0
+                proc.stdout = b"t1\t100\nt2\t200\n"
+                proc.stderr = b""
+                return proc
+
+        mock_run.side_effect = side_effect
+
+        result = backup_database(config=CFG, output_dir=tmp_dir)
+
+        assert result.success is True
+        assert result.metadata is not None
+        assert result.metadata.table_count == 2
+        assert result.metadata.table_stats[0].name == "t1"
+        assert result.metadata.table_stats[0].row_count == 100

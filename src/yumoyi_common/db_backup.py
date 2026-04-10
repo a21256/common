@@ -57,6 +57,21 @@ class ConnectionConfig:
     charset: str = DEFAULT_CHARSET
 
 
+@dataclass(frozen=True)
+class TableStats:
+    """Per-table statistics collected at backup time."""
+    name: str
+    row_count: int
+    ddl: str = ""  # CREATE TABLE statement; populated for table-level backups
+
+
+@dataclass
+class BackupMetadata:
+    """Aggregate statistics about what was backed up."""
+    table_count: int = 0
+    table_stats: List[TableStats] = field(default_factory=list)
+
+
 @dataclass
 class BackupResult:
     success: bool
@@ -66,6 +81,7 @@ class BackupResult:
     error: str = ""
     tables: Optional[List[str]] = None  # None = full backup, list = specific tables
     migration_state: str = ""
+    metadata: Optional[BackupMetadata] = None
 
 
 @dataclass
@@ -146,7 +162,8 @@ def backup_database(
     return _run_backup(
         config=config, tables=None, output_dir=output_dir,
         compress=compress, timeout=timeout,
-        mysqldump_path=mysqldump_path, extra_args=extra_args,
+        mysqldump_path=mysqldump_path, mysql_path=DEFAULT_MYSQL,
+        extra_args=extra_args,
     )
 
 
@@ -175,7 +192,8 @@ def backup_tables(
     return _run_backup(
         config=config, tables=sorted(tables), output_dir=output_dir,
         compress=compress, timeout=timeout,
-        mysqldump_path=mysqldump_path, extra_args=extra_args,
+        mysqldump_path=mysqldump_path, mysql_path=DEFAULT_MYSQL,
+        extra_args=extra_args,
     )
 
 
@@ -438,6 +456,101 @@ def _safe_unlink(path: Path) -> None:
         pass
 
 
+def _collect_metadata(
+    config: ConnectionConfig,
+    tables: Optional[List[str]],
+    mysql_path: str,
+    timeout: int,
+) -> Optional[BackupMetadata]:
+    """Collect table statistics from information_schema after backup.
+
+    Returns BackupMetadata on success, None on any failure.
+    Never raises -- metadata collection must not break a successful backup.
+
+    - Full backup (tables is None): row counts for all tables, no DDL.
+    - Table backup (tables is a list): row counts + DDL for specified tables.
+    """
+    mysql_bin = shutil.which(mysql_path)
+    if not mysql_bin:
+        return None
+
+    try:
+        # Step 1: row counts from information_schema (fast, no table scan)
+        row_count_query = (
+            "SELECT TABLE_NAME, TABLE_ROWS "
+            "FROM information_schema.TABLES "
+            f"WHERE TABLE_SCHEMA = '{config.database}'"
+        )
+        if tables:
+            quoted = ", ".join(f"'{t}'" for t in tables)
+            row_count_query += f" AND TABLE_NAME IN ({quoted})"
+        row_count_query += " ORDER BY TABLE_NAME"
+
+        cmd_base = [
+            mysql_bin,
+            f"--host={config.host}",
+            f"--port={config.port}",
+            f"--user={config.user}",
+            f"--default-character-set={config.charset}",
+            "--batch",
+            "--skip-column-names",
+        ]
+        env = {**os.environ, MYSQL_PWD_ENV: config.password}
+
+        proc = subprocess.run(
+            [*cmd_base, "-e", row_count_query, config.database],
+            capture_output=True, env=env, timeout=timeout,
+        )
+        if proc.returncode != 0:
+            logger.warning("Metadata collection failed: %s",
+                           proc.stderr.decode("utf-8", errors="replace").strip())
+            return None
+
+        # Parse: "table_name\trow_count\n" per line
+        output = proc.stdout.decode("utf-8", errors="replace").strip()
+        row_counts: dict = {}
+        for line in output.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 2:
+                tname = parts[0].strip()
+                try:
+                    rcount = int(parts[1].strip())
+                except ValueError:
+                    rcount = 0
+                row_counts[tname] = rcount
+
+        # Step 2: DDL for table-level backups
+        ddl_map: dict = {}
+        if tables:
+            for tname in tables:
+                ddl_proc = subprocess.run(
+                    [*cmd_base, "-e", f"SHOW CREATE TABLE `{tname}`",
+                     config.database],
+                    capture_output=True, env=env, timeout=timeout,
+                )
+                if ddl_proc.returncode == 0:
+                    ddl_output = ddl_proc.stdout.decode("utf-8", errors="replace")
+                    # Output: "table_name\tCREATE TABLE ...\n"
+                    parts = ddl_output.split("\t", 1)
+                    if len(parts) >= 2:
+                        ddl_map[tname] = parts[1].strip()
+
+        # Build result
+        stats = []
+        for tname in sorted(row_counts):
+            stats.append(TableStats(
+                name=tname,
+                row_count=row_counts[tname],
+                ddl=ddl_map.get(tname, ""),
+            ))
+
+        return BackupMetadata(table_count=len(stats), table_stats=stats)
+
+    except Exception:
+        logger.warning("Metadata collection failed", exc_info=True)
+        return None
+
+
 def _run_backup(
     *,
     config: ConnectionConfig,
@@ -446,6 +559,7 @@ def _run_backup(
     compress: bool,
     timeout: int,
     mysqldump_path: str,
+    mysql_path: str,
     extra_args: Sequence[str],
 ) -> BackupResult:
     """Internal: execute mysqldump and stream output to file."""
@@ -519,9 +633,13 @@ def _run_backup(
         logger.info("Backup %s -> %s (%d bytes, %.1fs)",
                      config.database, filename, file_size, duration)
 
+        metadata = _collect_metadata(
+            config, tables, mysql_path=mysql_path, timeout=timeout,
+        )
+
         return BackupResult(
             success=True, file_path=str(file_path), file_size=file_size,
-            duration=duration, tables=tables,
+            duration=duration, tables=tables, metadata=metadata,
         )
 
     except subprocess.TimeoutExpired:

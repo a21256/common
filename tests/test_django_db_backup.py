@@ -11,6 +11,8 @@ import pytest
 from yumoyi_common.db_backup import (
     ConnectionConfig,
     BackupResult,
+    BackupMetadata,
+    TableStats,
     RestoreResult,
     ListTablesResult,
 )
@@ -373,6 +375,38 @@ class TestDbbackupCommand:
 
         mock_cleanup.assert_called_once()
         assert "3" in out.getvalue()
+
+    @patch("yumoyi_common.management.commands.dbbackup.backup_current_database")
+    def test_backup_prints_metadata_summary(self, mock_backup):
+        mock_backup.return_value = BackupResult(
+            success=True, file_path="/backups/test.sql",
+            file_size=1024, duration=1.0,
+            metadata=BackupMetadata(
+                table_count=2,
+                table_stats=[
+                    TableStats(name="orders", row_count=5000),
+                    TableStats(name="users", row_count=123),
+                ],
+            ),
+        )
+
+        from yumoyi_common.management.commands.dbbackup import Command
+        out = io.StringIO()
+        cmd = Command(stdout=out)
+        cmd.style.SUCCESS = lambda x: x
+
+        cmd.handle(
+            list_tables=False, database="default",
+            output_dir="/backups", tables=None, compress=False, cleanup=0,
+            mysqldump_path="mysqldump", mysql_path="mysql",
+        )
+
+        output = out.getvalue()
+        assert "Tables: 2" in output
+        assert "orders" in output
+        assert "5,000" in output
+        assert "users" in output
+        assert "123" in output
 
 
 # ==================== Management command: dbrestore ====================
