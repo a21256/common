@@ -7,11 +7,16 @@ name = "yumoyi-common"
 version = "0.2.0"
 description = "Shared utilities for yumoyi projects"
 requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "a21256"}]
 dependencies = ["openpyxl>=3.1"]
 
 [project.optional-dependencies]
 django = ["Django>=4.1"]
-dev = ["pytest", "coverage"]
+dev = ["pytest>=7.0", "coverage>=7.0"]
+
+[project.urls]
+Repository = "https://github.com/a21256/common"
 
 [tool.setuptools.packages.find]
 where = ["src"]

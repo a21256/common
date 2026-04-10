@@ -12,6 +12,7 @@ import logging
 import os
 import shutil
 import subprocess
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -295,15 +296,58 @@ def _is_gzipped(path: Path) -> bool:
     return path.name.endswith(".sql.gz")
 
 
-def _stream_copy(src, dst, start_time: float, timeout: int) -> None:
-    """Copy from *src* to *dst* in chunks, raising on timeout."""
-    while True:
-        if time.monotonic() - start_time > timeout:
-            raise subprocess.TimeoutExpired("stream", timeout)
-        chunk = src.read(STREAM_CHUNK_SIZE)
-        if not chunk:
-            break
-        dst.write(chunk)
+def _stream_with_timeout(src, dst, timeout: float) -> None:
+    """Copy *src* → *dst* in a daemon thread with a hard timeout.
+
+    Unlike a simple loop-with-check, this enforces the deadline even
+    when a single ``read()`` or ``write()`` call blocks (e.g. because
+    the subprocess is hung).  The caller must kill the subprocess after
+    a ``TimeoutExpired`` to unblock the stuck thread.
+    """
+    exc_box: list = []
+
+    def _worker() -> None:
+        try:
+            while True:
+                chunk = src.read(STREAM_CHUNK_SIZE)
+                if not chunk:
+                    break
+                dst.write(chunk)
+        except Exception as exc:
+            exc_box.append(exc)
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join(max(0, timeout))
+
+    if t.is_alive():
+        raise subprocess.TimeoutExpired("stream", timeout)
+    if exc_box:
+        raise exc_box[0]
+
+
+def _drain_pipe_async(pipe):
+    """Start draining *pipe* in a daemon thread.
+
+    Prevents pipe-buffer deadlock: if the child process writes enough
+    stderr to fill the OS pipe buffer (~64 KB), it blocks until someone
+    reads from the pipe.  Running the read in a background thread keeps
+    the buffer drained while the main data flow continues.
+
+    Returns ``(thread, result_list)``.  After the thread joins,
+    ``result_list[0]`` contains the bytes read (or ``b""`` on error).
+    """
+    result: list = []
+
+    def _worker() -> None:
+        try:
+            result.append(pipe.read())
+        except Exception:
+            result.append(b"")
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    return t, result
 
 
 def _safe_unlink(path: Path) -> None:
@@ -363,16 +407,20 @@ def _run_backup(
             proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
             )
+            stderr_t, stderr_buf = _drain_pipe_async(proc.stderr)
             try:
                 with gzip.open(file_path, "wb") as gz:
-                    _stream_copy(proc.stdout, gz, start, timeout)
-                stderr_data = proc.stderr.read()
+                    remaining = timeout - (time.monotonic() - start)
+                    _stream_with_timeout(proc.stdout, gz, remaining)
                 remaining = max(1, int(timeout - (time.monotonic() - start)))
                 proc.wait(timeout=remaining)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
                 raise
+            finally:
+                stderr_t.join(5)
+            stderr_data = stderr_buf[0] if stderr_buf else b""
         else:
             # Stream: mysqldump stdout -> plain file directly
             with open(file_path, "wb") as f:
@@ -451,20 +499,23 @@ def _run_restore(
             proc = subprocess.Popen(
                 cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
             )
+            stderr_t, stderr_buf = _drain_pipe_async(proc.stderr)
             try:
                 with gzip.open(backup_path, "rb") as gz:
-                    _stream_copy(gz, proc.stdin, start, timeout)
+                    remaining = timeout - (time.monotonic() - start)
+                    _stream_with_timeout(gz, proc.stdin, remaining)
                 proc.stdin.close()
-                stderr_data = proc.stderr.read()
                 remaining = max(1, int(timeout - (time.monotonic() - start)))
                 proc.wait(timeout=remaining)
             except BrokenPipeError:
-                stderr_data = proc.stderr.read()
                 proc.wait()
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
                 raise
+            finally:
+                stderr_t.join(5)
+            stderr_data = stderr_buf[0] if stderr_buf else b""
         else:
             # Stream: file -> mysql stdin directly
             with open(backup_path, "rb") as f:

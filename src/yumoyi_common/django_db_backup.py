@@ -38,7 +38,14 @@ logger = logging.getLogger(__name__)
 
 def _get_connection_config(db_alias: str = "default") -> ConnectionConfig:
     """Extract connection parameters from Django settings."""
-    db = settings.DATABASES[db_alias]
+    try:
+        db = settings.DATABASES[db_alias]
+    except KeyError:
+        available = ", ".join(sorted(settings.DATABASES)) or "(none)"
+        raise ValueError(
+            f"Database alias '{db_alias}' not found in settings.DATABASES. "
+            f"Available: {available}"
+        )
     engine = db.get("ENGINE", "")
     if "mysql" not in engine:
         raise ValueError(

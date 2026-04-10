@@ -61,6 +61,12 @@ class TestGetConnectionConfig:
         with pytest.raises(ValueError, match="only MySQL"):
             _get_connection_config("sqlite_db")
 
+    @patch(SETTINGS_PATCH, MockSettings)
+    def test_unknown_alias_raises_with_hint(self):
+        from yumoyi_common.django_db_backup import _get_connection_config
+        with pytest.raises(ValueError, match="not found.*Available"):
+            _get_connection_config("nonexistent")
+
 
 # ==================== backup_current_database ====================
 
