@@ -10,6 +10,8 @@ from yumoyi_common.column_inference import (
     SCORE_FORMAT_MATCH,
     SCORE_KEYWORD_CONTAINS,
     SCORE_KEYWORD_EXACT,
+    EXCEL_SERIAL_MIN,
+    EXCEL_SERIAL_MAX,
     _cell_to_str,
     _normalize_header,
     infer_columns,
@@ -116,6 +118,18 @@ class TestIsDateLike:
 
     def test_none(self):
         assert is_date_like(None) is False
+
+    def test_bool_excluded(self):
+        assert is_date_like(True) is False
+        assert is_date_like(False) is False
+
+    def test_custom_serial_range(self):
+        # 100 is outside default range but inside a custom range
+        assert is_date_like(100) is False
+        assert is_date_like(100, serial_range=(50, 200)) is True
+
+    def test_constants_exported(self):
+        assert EXCEL_SERIAL_MIN < EXCEL_SERIAL_MAX
 
 
 # ============================================================

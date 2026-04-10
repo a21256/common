@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand, CommandError
 from yumoyi_common.django_db_backup import (
     backup_current_database,
     cleanup_current_database_backups,
+    list_current_database_tables,
 )
 
 
@@ -13,8 +14,8 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "--output-dir", required=True,
-            help="Directory to store the backup file",
+            "--output-dir", default=None,
+            help="Directory to store the backup file (required unless --list-tables)",
         )
         parser.add_argument(
             "--tables", nargs="*", default=None,
@@ -32,8 +33,29 @@ class Command(BaseCommand):
             "--cleanup", type=int, default=0, metavar="N",
             help="After backup, keep only the most recent N backups (0 = no cleanup)",
         )
+        parser.add_argument(
+            "--list-tables", action="store_true", default=False,
+            help="List all tables in the database and exit (no backup)",
+        )
 
     def handle(self, *args, **options):
+        if options["list_tables"]:
+            result = list_current_database_tables(
+                db_alias=options["database"],
+            )
+            if not result.success:
+                raise CommandError(f"Failed to list tables: {result.error}")
+            if not result.tables:
+                self.stdout.write("No tables found.")
+                return
+            self.stdout.write(f"Tables in database ({len(result.tables)}):")
+            for t in result.tables:
+                self.stdout.write(f"  {t}")
+            return
+
+        if not options["output_dir"]:
+            raise CommandError("--output-dir is required for backup")
+
         result = backup_current_database(
             output_dir=options["output_dir"],
             tables=options["tables"],

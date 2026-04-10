@@ -71,6 +71,12 @@ SCORE_KEYWORD_CONTAINS = 50
 SAMPLE_ROWS = 10
 FORMAT_MATCH_THRESHOLD = 0.5
 
+# Excel serial-number range treated as "date-like" by is_date_like().
+# Override via the serial_range parameter when the default is too narrow
+# or too wide for your data.
+EXCEL_SERIAL_MIN = 30000   # ~1982-02
+EXCEL_SERIAL_MAX = 60000   # ~2064-04
+
 
 # ============================================================
 # Internal helpers (self-contained, no external imports)
@@ -114,13 +120,25 @@ def is_numeric(val: Any) -> bool:
         return False
 
 
-def is_date_like(val: Any) -> bool:
-    """Value looks like a date (datetime, date, or Excel serial number)."""
+def is_date_like(
+    val: Any,
+    *,
+    serial_range: tuple = (EXCEL_SERIAL_MIN, EXCEL_SERIAL_MAX),
+) -> bool:
+    """Value looks like a date (datetime, date, or Excel serial number).
+
+    Parameters
+    ----------
+    serial_range : (min, max) range for Excel serial-number detection.
+                   Defaults to (EXCEL_SERIAL_MIN, EXCEL_SERIAL_MAX).
+    """
     import datetime as dt
     if isinstance(val, (dt.datetime, dt.date)):
         return True
-    if isinstance(val, (int, float)) and 40000 < float(val) < 50000:
-        return True
+    if isinstance(val, (int, float)) and not isinstance(val, bool):
+        v = float(val)
+        if serial_range[0] <= v <= serial_range[1]:
+            return True
     s = _cell_to_str(val)
     if re.match(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}$", s):
         return True
