@@ -275,7 +275,7 @@ class TestDbbackupCommand:
         cmd.handle(
             list_tables=True, database="default",
             output_dir=None, tables=None, compress=False, cleanup=0,
-            mysqldump_path="mysqldump", mysql_path="mysql",
+            mysqldump_path="mysqldump", mysql_path="mysql", tag="",
         )
 
         output = out.getvalue()
@@ -316,12 +316,12 @@ class TestDbbackupCommand:
         cmd.handle(
             list_tables=False, database="default",
             output_dir="/backups", tables=None, compress=False, cleanup=0,
-            mysqldump_path="mysqldump", mysql_path="mysql",
+            mysqldump_path="mysqldump", mysql_path="mysql", tag="",
         )
 
         output = out.getvalue()
         assert "/backups/test.sql" in output
-        assert "1024 bytes" in output
+        assert "1.0 KB" in output
 
     @patch("yumoyi_common.management.commands.dbbackup.backup_current_database")
     def test_backup_failure_raises(self, mock_backup):
@@ -338,7 +338,7 @@ class TestDbbackupCommand:
             cmd.handle(
                 list_tables=False, database="default",
                 output_dir="/backups", tables=None, compress=False, cleanup=0,
-                mysqldump_path="mysqldump", mysql_path="mysql",
+                mysqldump_path="mysqldump", mysql_path="mysql", tag="",
             )
 
     def test_missing_output_dir_raises(self):
@@ -351,6 +351,7 @@ class TestDbbackupCommand:
             cmd.handle(
                 list_tables=False, database="default",
                 output_dir=None, tables=None, compress=False, cleanup=0,
+                mysqldump_path="mysqldump", mysql_path="mysql", tag="",
             )
 
     @patch("yumoyi_common.management.commands.dbbackup.cleanup_current_database_backups",
@@ -370,7 +371,7 @@ class TestDbbackupCommand:
         cmd.handle(
             list_tables=False, database="default",
             output_dir="/backups", tables=None, compress=False, cleanup=5,
-            mysqldump_path="mysqldump", mysql_path="mysql",
+            mysqldump_path="mysqldump", mysql_path="mysql", tag="",
         )
 
         mock_cleanup.assert_called_once()
@@ -384,9 +385,11 @@ class TestDbbackupCommand:
             metadata=BackupMetadata(
                 table_count=2,
                 table_stats=[
-                    TableStats(name="orders", estimated_row_count=5000),
-                    TableStats(name="users", estimated_row_count=123),
+                    TableStats(name="orders", row_count=5000, data_size=50000),
+                    TableStats(name="users", row_count=123, data_size=10000),
                 ],
+                total_data_size=60000,
+                total_index_size=15000,
             ),
         )
 
@@ -398,16 +401,16 @@ class TestDbbackupCommand:
         cmd.handle(
             list_tables=False, database="default",
             output_dir="/backups", tables=None, compress=False, cleanup=0,
-            mysqldump_path="mysqldump", mysql_path="mysql",
+            mysqldump_path="mysqldump", mysql_path="mysql", tag="",
         )
 
         output = out.getvalue()
         assert "Tables: 2" in output
         assert "orders" in output
-        assert "~" in output  # approximate indicator
         assert "5,000" in output
         assert "users" in output
         assert "123" in output
+        assert "data:" in output  # size summary
 
 
 # ==================== Management command: dbrestore ====================

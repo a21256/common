@@ -10,6 +10,15 @@ from yumoyi_common.django_db_backup import (
 )
 
 
+def _human_size(nbytes: int) -> str:
+    """Format byte count as human-readable string."""
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(nbytes) < 1024:
+            return f"{nbytes:,.1f} {unit}" if unit != "B" else f"{nbytes:,} B"
+        nbytes /= 1024
+    return f"{nbytes:,.1f} TB"
+
+
 class Command(BaseCommand):
     help = "Backup the database using mysqldump"
 
@@ -46,6 +55,10 @@ class Command(BaseCommand):
             "--mysql-path", default=DEFAULT_MYSQL,
             help=f"Path to mysql binary, used by --list-tables (default: '{DEFAULT_MYSQL}' from PATH)",
         )
+        parser.add_argument(
+            "--tag", default="",
+            help="Backup tag for audit (e.g. 'manual', 'pre_import_auto')",
+        )
 
     def handle(self, *args, **options):
         if options["list_tables"]:
@@ -73,6 +86,7 @@ class Command(BaseCommand):
             db_alias=options["database"],
             mysqldump_path=options["mysqldump_path"],
             mysql_path=options["mysql_path"],
+            tag=options["tag"],
         )
 
         if not result.success:
@@ -80,15 +94,27 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS(
             f"Backup saved to {result.file_path} "
-            f"({result.file_size} bytes, {result.duration:.1f}s)"
+            f"({_human_size(result.file_size)}, {result.duration:.1f}s)"
         ))
 
         if result.metadata:
             m = result.metadata
-            self.stdout.write(f"  Tables: {m.table_count}")
+            summary = f"  Tables: {m.table_count}"
+            if m.total_data_size or m.total_index_size:
+                summary += (
+                    f" (data: {_human_size(m.total_data_size)},"
+                    f" index: {_human_size(m.total_index_size)})"
+                )
+            self.stdout.write(summary)
+            if m.backup_tag:
+                self.stdout.write(f"  Tag: {m.backup_tag}")
             for ts in m.table_stats:
+                marker = "~" if ts.estimated else " "
+                size_info = ""
+                if ts.data_size:
+                    size_info = f"  {_human_size(ts.data_size)}"
                 self.stdout.write(
-                    f"    {ts.name:<40s} ~{ts.estimated_row_count:>10,} rows"
+                    f"    {ts.name:<40s}{marker}{ts.row_count:>10,} rows{size_info}"
                 )
 
         if options["cleanup"] > 0:

@@ -660,34 +660,62 @@ class TestListTablesResult:
 
 # ==================== _collect_metadata ====================
 
+# info_schema output format: "table_name\test_rows\tdata_len\tindex_len"
+_INFO_3_TABLES = b"orders\t1234\t50000\t12000\nproducts\t567\t30000\t8000\nusers\t89\t10000\t2000\n"
+_INFO_1_TABLE = b"users\t89\t10000\t2000\n"
+
+
 class TestCollectMetadata:
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
     @patch("yumoyi_common.db_backup.subprocess.run")
-    def test_full_backup_metadata(self, mock_run, mock_which):
-        """Full backup (tables=None): row counts for all tables, no DDL."""
-        mock_run.return_value = _mock_proc(
-            returncode=0,
-            stdout=b"orders\t1234\nproducts\t567\nusers\t89\n",
-        )
+    def test_full_backup_exact_counts(self, mock_run, mock_which):
+        """Full backup: info_schema + COUNT(*) per table, sizes populated."""
+        mock_run.side_effect = [
+            _mock_proc(returncode=0, stdout=_INFO_3_TABLES),  # info_schema
+            _mock_proc(returncode=0, stdout=b"1300"),          # COUNT orders
+            _mock_proc(returncode=0, stdout=b"600"),           # COUNT products
+            _mock_proc(returncode=0, stdout=b"95"),            # COUNT users
+        ]
 
         meta = _collect_metadata(CFG, tables=None, mysql_path="mysql", timeout=30)
 
         assert meta is not None
         assert meta.table_count == 3
+        # Exact counts used
         assert meta.table_stats[0].name == "orders"
-        assert meta.table_stats[0].estimated_row_count == 1234
-        assert meta.table_stats[0].ddl == ""
-        assert meta.table_stats[2].name == "users"
-        assert meta.table_stats[2].estimated_row_count == 89
+        assert meta.table_stats[0].row_count == 1300
+        assert meta.table_stats[0].estimated is False
+        # Sizes from info_schema
+        assert meta.table_stats[0].data_size == 50000
+        assert meta.table_stats[0].index_size == 12000
+        # Totals
+        assert meta.total_data_size == 90000
+        assert meta.total_index_size == 22000
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
     @patch("yumoyi_common.db_backup.subprocess.run")
-    def test_table_backup_metadata_with_ddl(self, mock_run, mock_which):
-        """Table backup: row counts + DDL for specified tables."""
-        # First call: row counts; second call: DDL for 'users'
+    def test_count_timeout_falls_back_to_estimate(self, mock_run, mock_which):
+        """COUNT(*) timeout -> fall back to info_schema estimate, mark estimated=True."""
         mock_run.side_effect = [
-            _mock_proc(returncode=0, stdout=b"users\t89\n"),
-            _mock_proc(returncode=0, stdout=b"users\tCREATE TABLE `users` (id INT)\n"),
+            _mock_proc(returncode=0, stdout=_INFO_1_TABLE),       # info_schema
+            subprocess.TimeoutExpired("cmd", 5),                   # COUNT times out
+        ]
+
+        meta = _collect_metadata(CFG, tables=None, mysql_path="mysql", timeout=30)
+
+        assert meta is not None
+        assert meta.table_stats[0].name == "users"
+        assert meta.table_stats[0].row_count == 89      # fallback to estimate
+        assert meta.table_stats[0].estimated is True
+
+    @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
+    @patch("yumoyi_common.db_backup.subprocess.run")
+    def test_table_backup_with_ddl(self, mock_run, mock_which):
+        """Table backup: exact counts + DDL."""
+        mock_run.side_effect = [
+            _mock_proc(returncode=0, stdout=_INFO_1_TABLE),                    # info_schema
+            _mock_proc(returncode=0, stdout=b"95"),                            # COUNT users
+            _mock_proc(returncode=0, stdout=b"users\tCREATE TABLE `users` (id INT)\n"),  # DDL
         ]
 
         meta = _collect_metadata(
@@ -695,19 +723,28 @@ class TestCollectMetadata:
         )
 
         assert meta is not None
-        assert meta.table_count == 1
-        assert meta.table_stats[0].name == "users"
-        assert meta.table_stats[0].estimated_row_count == 89
+        assert meta.table_stats[0].row_count == 95
+        assert meta.table_stats[0].estimated is False
         assert "CREATE TABLE" in meta.table_stats[0].ddl
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
     @patch("yumoyi_common.db_backup.subprocess.run")
-    def test_metadata_failure_returns_none(self, mock_run, mock_which):
-        """MySQL error during metadata collection -> None, no crash."""
-        mock_run.return_value = _mock_proc(
-            returncode=1, stderr=b"Access denied",
+    def test_backup_tag_stored(self, mock_run, mock_which):
+        mock_run.side_effect = [
+            _mock_proc(returncode=0, stdout=_INFO_1_TABLE),
+            _mock_proc(returncode=0, stdout=b"95"),
+        ]
+        meta = _collect_metadata(
+            CFG, tables=None, mysql_path="mysql", timeout=30,
+            tag="pre_import_auto",
         )
+        assert meta is not None
+        assert meta.backup_tag == "pre_import_auto"
 
+    @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
+    @patch("yumoyi_common.db_backup.subprocess.run")
+    def test_metadata_failure_returns_none(self, mock_run, mock_which):
+        mock_run.return_value = _mock_proc(returncode=1, stderr=b"Access denied")
         meta = _collect_metadata(CFG, tables=None, mysql_path="mysql", timeout=30)
         assert meta is None
 
@@ -720,36 +757,30 @@ class TestCollectMetadata:
     @patch("yumoyi_common.db_backup.subprocess.run")
     def test_metadata_wired_into_backup(self, mock_run, mock_which, tmp_dir):
         """backup_database() populates result.metadata on success."""
-        # Two calls: 1st for mysqldump (subprocess.run with stdout=file),
-        # 2nd for metadata (subprocess.run with capture_output)
         mock_run.side_effect = [
-            # mysqldump call
-            _mock_run_streaming()(["fake"], stdout=None),
-            # metadata call (row counts)
-            _mock_proc(returncode=0, stdout=b"t1\t100\nt2\t200\n"),
+            # 1: mysqldump (streaming to file)
+            MagicMock(returncode=0, stderr=b""),
+            # 2: info_schema query
+            _mock_proc(returncode=0, stdout=b"t1\t100\t5000\t1000\nt2\t200\t8000\t2000\n"),
+            # 3: COUNT t1
+            _mock_proc(returncode=0, stdout=b"105"),
+            # 4: COUNT t2
+            _mock_proc(returncode=0, stdout=b"210"),
         ]
-        # Need to re-patch for the streaming side_effect
-        mock_run.side_effect = None
-        call_count = [0]
+        # Override first call to write to the stdout file
+        original_side_effect = mock_run.side_effect
+        calls = list(original_side_effect)
+
         def side_effect(cmd, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                # mysqldump: write to stdout file
+            idx = side_effect.call_idx
+            side_effect.call_idx += 1
+            if idx == 0:
                 target = kwargs.get("stdout")
                 if target and hasattr(target, "write"):
                     target.write(b"-- dump")
-                proc = MagicMock()
-                proc.returncode = 0
-                proc.stderr = b""
-                return proc
-            else:
-                # metadata query
-                proc = MagicMock()
-                proc.returncode = 0
-                proc.stdout = b"t1\t100\nt2\t200\n"
-                proc.stderr = b""
-                return proc
-
+                return calls[0]
+            return calls[idx]
+        side_effect.call_idx = 0
         mock_run.side_effect = side_effect
 
         result = backup_database(config=CFG, output_dir=tmp_dir)
@@ -757,5 +788,6 @@ class TestCollectMetadata:
         assert result.success is True
         assert result.metadata is not None
         assert result.metadata.table_count == 2
-        assert result.metadata.table_stats[0].name == "t1"
-        assert result.metadata.table_stats[0].estimated_row_count == 100
+        assert result.metadata.table_stats[0].row_count == 105
+        assert result.metadata.table_stats[0].estimated is False
+        assert result.metadata.total_data_size == 13000

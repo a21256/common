@@ -90,6 +90,7 @@ def backup_current_database(
     mysql_path: str = DEFAULT_MYSQL,
     extra_args: Sequence[str] = (),
     collect_metadata: bool = True,
+    tag: str = "",
 ) -> BackupResult:
     """Backup the current Django database (full or specific tables).
 
@@ -106,6 +107,7 @@ def backup_current_database(
             timeout=timeout, mysqldump_path=mysqldump_path,
             mysql_path=mysql_path,
             extra_args=extra_args, collect_metadata=collect_metadata,
+            tag=tag,
         )
     else:
         result = backup_database(
@@ -114,6 +116,7 @@ def backup_current_database(
             timeout=timeout, mysqldump_path=mysqldump_path,
             mysql_path=mysql_path,
             extra_args=extra_args, collect_metadata=collect_metadata,
+            tag=tag,
         )
 
     if result.success and migration_state:
