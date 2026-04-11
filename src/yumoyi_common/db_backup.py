@@ -40,6 +40,19 @@ MYSQL_PWD_ENV = "MYSQL_PWD"
 DEFAULT_DUMP_FLAGS = ("--single-transaction", "--routines", "--triggers")
 STDERR_DRAIN_TIMEOUT = 5   # seconds to wait for stderr thread after main I/O completes
 DEFAULT_COUNT_TIMEOUT = 5  # per-table SELECT COUNT(*) timeout; falls back to estimate
+MIN_WAIT_TIMEOUT = 1       # floor for remaining-time calculations (seconds)
+
+# Column indices for information_schema.TABLES query result
+# (TABLE_NAME, TABLE_ROWS, DATA_LENGTH, INDEX_LENGTH)
+_INFO_COL_NAME = 0
+_INFO_COL_ROWS = 1
+_INFO_COL_DATA = 2
+_INFO_COL_INDEX = 3
+_INFO_COL_COUNT = 4        # minimum number of columns expected
+
+# Column indices for SHOW CREATE TABLE result (TABLE_NAME, DDL)
+_DDL_COL_VALUE = 1
+_DDL_COL_COUNT = 2
 
 
 # ==================== Config & Result dataclasses ====================
@@ -117,6 +130,7 @@ class ListTablesResult:
 # ==================== Backward compatibility ====================
 
 _FLAT_PARAM_KEYS = frozenset({"host", "port", "user", "password", "database", "charset"})
+_COMPAT_WARN_STACKLEVEL = 3  # public func -> _compat_config -> warnings.warn
 
 
 def _compat_config(kwargs: dict) -> ConnectionConfig:
@@ -138,7 +152,7 @@ def _compat_config(kwargs: dict) -> ConnectionConfig:
         "Passing host/port/user/password/database/charset as flat keyword "
         "arguments is deprecated. Use config=ConnectionConfig(...) instead.",
         DeprecationWarning,
-        stacklevel=3,
+        stacklevel=_COMPAT_WARN_STACKLEVEL,
     )
     config = ConnectionConfig(
         host=kwargs.pop("host"),
@@ -597,11 +611,11 @@ def _collect_metadata(
         table_info: dict = {}  # name -> (est_rows, data_size, index_size)
         for line in info_output.splitlines():
             parts = line.split("\t")
-            if len(parts) >= 4:
-                tname = parts[0].strip()
-                est_rows = _safe_int(parts[1])
-                data_sz = _safe_int(parts[2])
-                index_sz = _safe_int(parts[3])
+            if len(parts) >= _INFO_COL_COUNT:
+                tname = parts[_INFO_COL_NAME].strip()
+                est_rows = _safe_int(parts[_INFO_COL_ROWS])
+                data_sz = _safe_int(parts[_INFO_COL_DATA])
+                index_sz = _safe_int(parts[_INFO_COL_INDEX])
                 table_info[tname] = (est_rows, data_sz, index_sz)
 
         # Step 2: exact COUNT(*) per table (with per-table timeout fallback)
@@ -629,8 +643,8 @@ def _collect_metadata(
                 ddl_output = _run_query(f"SHOW CREATE TABLE {escaped}")
                 if ddl_output is not None:
                     parts = ddl_output.split("\t", 1)
-                    if len(parts) >= 2:
-                        ddl_map[tname] = parts[1].strip()
+                    if len(parts) >= _DDL_COL_COUNT:
+                        ddl_map[tname] = parts[_DDL_COL_VALUE].strip()
 
         # Step 4: build result
         stats = []
@@ -726,7 +740,7 @@ def _run_backup(
                 with gzip.open(file_path, "wb") as gz:
                     remaining = timeout - (time.monotonic() - start)
                     _stream_with_timeout(proc.stdout, gz, remaining)
-                remaining = max(1, timeout - int(time.monotonic() - start))
+                remaining = max(MIN_WAIT_TIMEOUT, timeout - int(time.monotonic() - start))
                 proc.wait(timeout=remaining)
             except subprocess.TimeoutExpired:
                 proc.kill()
@@ -828,7 +842,7 @@ def _run_restore(
                     remaining = timeout - (time.monotonic() - start)
                     _stream_with_timeout(gz, proc.stdin, remaining)
                 proc.stdin.close()
-                remaining = max(1, timeout - int(time.monotonic() - start))
+                remaining = max(MIN_WAIT_TIMEOUT, timeout - int(time.monotonic() - start))
                 proc.wait(timeout=remaining)
             except BrokenPipeError:
                 logger.info("mysql closed stdin early (BrokenPipeError)")
