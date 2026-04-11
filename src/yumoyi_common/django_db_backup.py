@@ -26,6 +26,7 @@ from .db_backup import (
     restore_backup,
     restore_tables,
     list_tables,
+    list_backups,
     cleanup_old_backups,
     DEFAULT_KEEP,
     DEFAULT_MYSQL,
@@ -179,6 +180,20 @@ def restore_tables_to_current_database(
         timeout=timeout, mysql_path=mysql_path,
         extra_args=extra_args,
     )
+
+
+def list_current_database_backups(
+    *,
+    output_dir: str,
+    db_alias: str = "default",
+) -> list:
+    """List backup files for the current Django database, newest first.
+
+    Uses the database name as prefix to filter backups.
+    Each item includes metadata loaded from sidecar .meta.json if available.
+    """
+    config = _get_connection_config(db_alias)
+    return list_backups(output_dir=output_dir, prefix=config.database)
 
 
 def list_current_database_tables(

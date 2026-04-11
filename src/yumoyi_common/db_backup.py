@@ -426,12 +426,127 @@ def cleanup_old_backups(
     for f in to_delete:
         try:
             f.unlink()
+            # Also remove sidecar metadata file
+            meta = Path(str(f) + METADATA_EXT)
+            if meta.exists():
+                meta.unlink(missing_ok=True)
             logger.info("Cleaned up old backup: %s", f.name)
             deleted += 1
         except OSError:
             logger.warning("Failed to delete old backup: %s", f.name)
 
     return deleted
+
+
+# ==================== Metadata Persistence ====================
+
+METADATA_EXT = ".meta.json"
+METADATA_JSON_INDENT = 2
+
+
+def save_backup_metadata(backup_file_path: str, metadata: BackupMetadata) -> None:
+    """Save BackupMetadata as a JSON sidecar file next to the backup.
+
+    Creates ``{backup_file_path}.meta.json``.  Silently returns on failure.
+    """
+    import json
+
+    meta_dict = {
+        "table_count": metadata.table_count,
+        "total_data_size": metadata.total_data_size,
+        "total_index_size": metadata.total_index_size,
+        "backup_tag": metadata.backup_tag,
+        "tables": [
+            {
+                "name": t.name,
+                "row_count": t.row_count,
+                "estimated": t.estimated,
+                "data_size": t.data_size,
+                "index_size": t.index_size,
+            }
+            for t in metadata.table_stats
+        ],
+    }
+    meta_path = Path(str(backup_file_path) + METADATA_EXT)
+    try:
+        meta_path.write_text(
+            json.dumps(meta_dict, ensure_ascii=False, indent=METADATA_JSON_INDENT),
+            encoding="utf-8",
+        )
+    except Exception:
+        logger.warning("Failed to save backup metadata: %s", meta_path)
+
+
+def load_backup_metadata(backup_file_path: str) -> Optional[BackupMetadata]:
+    """Load BackupMetadata from a JSON sidecar file.
+
+    Returns ``None`` if the sidecar does not exist or cannot be parsed.
+    """
+    import json
+
+    meta_path = Path(str(backup_file_path) + METADATA_EXT)
+    if not meta_path.exists():
+        return None
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+        table_stats = [
+            TableStats(
+                name=t["name"],
+                row_count=t.get("row_count", 0),
+                estimated=t.get("estimated", False),
+                data_size=t.get("data_size", 0),
+                index_size=t.get("index_size", 0),
+            )
+            for t in data.get("tables", [])
+        ]
+        return BackupMetadata(
+            table_count=data.get("table_count", 0),
+            table_stats=table_stats,
+            total_data_size=data.get("total_data_size", 0),
+            total_index_size=data.get("total_index_size", 0),
+            backup_tag=data.get("backup_tag", ""),
+        )
+    except Exception:
+        logger.warning("Failed to load backup metadata: %s", meta_path)
+        return None
+
+
+def list_backups(
+    *,
+    output_dir: str,
+    prefix: Optional[str] = None,
+) -> List[dict]:
+    """List backup files in *output_dir*, newest first.
+
+    Each item is a dict with keys: ``name``, ``file_path``, ``size``,
+    ``mtime`` (ISO formatted string), ``metadata`` (BackupMetadata or None).
+
+    If *prefix* is given, only files whose name starts with
+    ``{prefix}_`` are returned.
+    """
+    dir_path = Path(output_dir)
+    if not dir_path.is_dir():
+        return []
+
+    results = []
+    for p in sorted(dir_path.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+        if not p.is_file():
+            continue
+        if p.suffix not in (EXT_SQL,) and not p.name.endswith(EXT_SQL_GZ):
+            continue
+        if prefix and not p.name.startswith(f"{prefix}_"):
+            continue
+
+        stat = p.stat()
+        results.append({
+            "name": p.name,
+            "file_path": str(p),
+            "size": stat.st_size,
+            "mtime": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+            "metadata": load_backup_metadata(str(p)),
+        })
+
+    return results
 
 
 # ==================== Internal ====================
@@ -776,6 +891,10 @@ def _run_backup(
                 config, tables, mysql_path=mysql_path, timeout=timeout,
                 count_timeout=count_timeout, tag=tag,
             )
+
+        # Auto-save metadata sidecar
+        if metadata:
+            save_backup_metadata(str(file_path), metadata)
 
         return BackupResult(
             success=True, file_path=str(file_path), file_size=file_size,
