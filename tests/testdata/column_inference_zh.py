@@ -1,46 +1,41 @@
-"""Chinese test fixtures for column_inference tests.
+"""ASCII-only loader for Chinese column_inference test fixtures."""
 
-All Chinese strings used in tests are centralised here so the test
-code itself stays language-neutral.  If the library ever needs to
-support additional locales, add parallel resource modules.
-"""
+from __future__ import annotations
 
-# ==================== Headers ====================
+import json
+from pathlib import Path
 
-HEADER_PRODUCT_NAME = "商品名称"
-HEADER_QTY = "数量"
-HEADER_DATE = "日期"
-HEADER_AMOUNT = "金额"
-HEADER_REMARK = "备注"
-HEADER_PRICE = "价格"
-HEADER_PRODUCT_CODE_LONG = "产品编码信息"
-HEADER_PRODUCT_CODE = "产品编码"
-HEADER_CODE = "编码"
-HEADER_COL_A = "A列"
-HEADER_COL_B = "B列"
 
-# ==================== Keywords ====================
+_DATA_PATH = Path(__file__).with_name("column_inference_zh.json")
+_DATA = json.loads(_DATA_PATH.read_text(encoding="utf-8"))
 
-KW_PRODUCT_NAME = (HEADER_PRODUCT_NAME, "名称")
-KW_QTY = (HEADER_QTY,)
-KW_DATE = (HEADER_DATE,)
-KW_AMOUNT = (HEADER_AMOUNT,)
-KW_CODE = (HEADER_CODE,)
-KW_PRICE = (HEADER_PRICE,)
-KW_NAME = ("名称",)
 
-# ==================== Cell data ====================
+HEADER_PRODUCT_NAME = _DATA["HEADER_PRODUCT_NAME"]
+HEADER_QTY = _DATA["HEADER_QTY"]
+HEADER_DATE = _DATA["HEADER_DATE"]
+HEADER_AMOUNT = _DATA["HEADER_AMOUNT"]
+HEADER_REMARK = _DATA["HEADER_REMARK"]
+HEADER_PRICE = _DATA["HEADER_PRICE"]
+HEADER_PRODUCT_CODE_LONG = _DATA["HEADER_PRODUCT_CODE_LONG"]
+HEADER_PRODUCT_CODE = _DATA["HEADER_PRODUCT_CODE"]
+HEADER_CODE = _DATA["HEADER_CODE"]
+HEADER_COL_A = _DATA["HEADER_COL_A"]
+HEADER_COL_B = _DATA["HEADER_COL_B"]
 
-CELL_APPLE = "苹果"
-CELL_BANANA = "香蕉"
-CELL_ORANGE = "橙子"
-CELL_NON_NUMERIC_TEXT = "非数字文本"
+KW_PRODUCT_NAME = tuple(_DATA["KW_PRODUCT_NAME"])
+KW_QTY = tuple(_DATA["KW_QTY"])
+KW_DATE = tuple(_DATA["KW_DATE"])
+KW_AMOUNT = tuple(_DATA["KW_AMOUNT"])
+KW_CODE = tuple(_DATA["KW_CODE"])
+KW_PRICE = tuple(_DATA["KW_PRICE"])
+KW_NAME = tuple(_DATA["KW_NAME"])
 
-# ==================== Normalize test data ====================
+CELL_APPLE = _DATA["CELL_APPLE"]
+CELL_BANANA = _DATA["CELL_BANANA"]
+CELL_ORANGE = _DATA["CELL_ORANGE"]
+CELL_NON_NUMERIC_TEXT = _DATA["CELL_NON_NUMERIC_TEXT"]
 
-NORMALIZE_INPUT = "  商 品 名 称  "
-NORMALIZE_EXPECTED = "商品名称"
+NORMALIZE_INPUT = _DATA["NORMALIZE_INPUT"]
+NORMALIZE_EXPECTED = _DATA["NORMALIZE_EXPECTED"]
 
-# ==================== FieldSpec construction ====================
-
-FIELDSPEC_KEYWORDS = (HEADER_PRICE, "Price")
+FIELDSPEC_KEYWORDS = tuple(_DATA["FIELDSPEC_KEYWORDS"])

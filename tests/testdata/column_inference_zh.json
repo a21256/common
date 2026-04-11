@@ -1,0 +1,45 @@
+{
+  "HEADER_PRODUCT_NAME": "\u5546\u54c1\u540d\u79f0",
+  "HEADER_QTY": "\u6570\u91cf",
+  "HEADER_DATE": "\u65e5\u671f",
+  "HEADER_AMOUNT": "\u91d1\u989d",
+  "HEADER_REMARK": "\u5907\u6ce8",
+  "HEADER_PRICE": "\u4ef7\u683c",
+  "HEADER_PRODUCT_CODE_LONG": "\u4ea7\u54c1\u7f16\u7801\u4fe1\u606f",
+  "HEADER_PRODUCT_CODE": "\u4ea7\u54c1\u7f16\u7801",
+  "HEADER_CODE": "\u7f16\u7801",
+  "HEADER_COL_A": "A\u5217",
+  "HEADER_COL_B": "B\u5217",
+  "KW_PRODUCT_NAME": [
+    "\u5546\u54c1\u540d\u79f0",
+    "\u540d\u79f0"
+  ],
+  "KW_QTY": [
+    "\u6570\u91cf"
+  ],
+  "KW_DATE": [
+    "\u65e5\u671f"
+  ],
+  "KW_AMOUNT": [
+    "\u91d1\u989d"
+  ],
+  "KW_CODE": [
+    "\u7f16\u7801"
+  ],
+  "KW_PRICE": [
+    "\u4ef7\u683c"
+  ],
+  "KW_NAME": [
+    "\u540d\u79f0"
+  ],
+  "CELL_APPLE": "\u82f9\u679c",
+  "CELL_BANANA": "\u9999\u8549",
+  "CELL_ORANGE": "\u6a59\u5b50",
+  "CELL_NON_NUMERIC_TEXT": "\u975e\u6570\u5b57\u6587\u672c",
+  "NORMALIZE_INPUT": "  \u5546 \u54c1 \u540d \u79f0  ",
+  "NORMALIZE_EXPECTED": "\u5546\u54c1\u540d\u79f0",
+  "FIELDSPEC_KEYWORDS": [
+    "\u4ef7\u683c",
+    "Price"
+  ]
+}

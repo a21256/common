@@ -17,6 +17,10 @@ from yumoyi_common.db_backup import (
     ListTablesResult,
 )
 
+EMPTY_TABLES_MESSAGE = "No tables found."
+TAG_OUTPUT = "manual"
+LARGE_SIZE_BYTES = 1024 ** 5
+
 
 # ==================== Mock Django settings ====================
 
@@ -218,6 +222,25 @@ class TestListCurrentDatabaseTables:
             list_current_database_tables(db_alias="sqlite_db")
 
 
+# ==================== list_current_database_backups ====================
+
+class TestListCurrentDatabaseBackups:
+    @patch(SETTINGS_PATCH, MockSettings)
+    @patch("yumoyi_common.django_db_backup.list_backups")
+    def test_uses_database_name_as_prefix(self, mock_list_backups, tmp_path):
+        mock_list_backups.return_value = [
+            {"name": "myapp_db_20260411.sql", "file_path": "/backups/myapp_db_20260411.sql"},
+        ]
+
+        from yumoyi_common.django_db_backup import list_current_database_backups
+        result = list_current_database_backups(output_dir=str(tmp_path))
+
+        assert len(result) == 1
+        mock_list_backups.assert_called_once_with(
+            output_dir=str(tmp_path), prefix="myapp_db",
+        )
+
+
 # ==================== Management command: dbbackup ====================
 
 class TestDbbackupArgparse:
@@ -300,6 +323,22 @@ class TestDbbackupCommand:
                 output_dir=None, tables=None, compress=False, cleanup=0,
                 mysqldump_path="mysqldump", mysql_path="mysql",
             )
+
+    @patch("yumoyi_common.management.commands.dbbackup.list_current_database_tables")
+    def test_list_tables_empty_prints_message(self, mock_list):
+        mock_list.return_value = ListTablesResult(success=True, tables=[])
+
+        from yumoyi_common.management.commands.dbbackup import Command
+        out = io.StringIO()
+        cmd = Command(stdout=out)
+
+        cmd.handle(
+            list_tables=True, database="default",
+            output_dir=None, tables=None, compress=False, cleanup=0,
+            mysqldump_path="mysqldump", mysql_path="mysql", tag="",
+        )
+
+        assert EMPTY_TABLES_MESSAGE in out.getvalue()
 
     @patch("yumoyi_common.management.commands.dbbackup.backup_current_database")
     def test_backup_success(self, mock_backup):
@@ -411,6 +450,38 @@ class TestDbbackupCommand:
         assert "users" in output
         assert "123" in output
         assert "data:" in output  # size summary
+
+    @patch("yumoyi_common.management.commands.dbbackup.backup_current_database")
+    def test_backup_prints_metadata_tag(self, mock_backup):
+        mock_backup.return_value = BackupResult(
+            success=True, file_path="/backups/test.sql",
+            file_size=1024, duration=1.0,
+            metadata=BackupMetadata(
+                table_count=1,
+                table_stats=[TableStats(name="orders", row_count=1)],
+                backup_tag=TAG_OUTPUT,
+            ),
+        )
+
+        from yumoyi_common.management.commands.dbbackup import Command
+        out = io.StringIO()
+        cmd = Command(stdout=out)
+        cmd.style.SUCCESS = lambda x: x
+
+        cmd.handle(
+            list_tables=False, database="default",
+            output_dir="/backups", tables=None, compress=False, cleanup=0,
+            mysqldump_path="mysqldump", mysql_path="mysql", tag=TAG_OUTPUT,
+        )
+
+        assert f"Tag: {TAG_OUTPUT}" in out.getvalue()
+
+
+class TestHumanSize:
+    def test_terabyte_fallback_unit(self):
+        from yumoyi_common.management.commands.dbbackup import _human_size
+
+        assert "TB" in _human_size(LARGE_SIZE_BYTES)
 
 
 # ==================== Management command: dbrestore ====================

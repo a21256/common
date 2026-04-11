@@ -25,7 +25,10 @@ from yumoyi_common.db_backup import (
     restore_backup,
     restore_tables,
     list_tables,
+    list_backups,
     cleanup_old_backups,
+    save_backup_metadata,
+    load_backup_metadata,
     _table_suffix,
     _is_gzipped,
     _collect_metadata,
@@ -33,6 +36,55 @@ from yumoyi_common.db_backup import (
 
 
 # ==================== Test fixtures & helpers ====================
+
+DEFAULT_PORT = 3306
+DEFAULT_KEEP = 5
+DEFAULT_TIMEOUT = 5
+DEFAULT_TIMEOUT_LONG = 30
+DELETE_KEEP_COUNT = 3
+DELETE_NONE_COUNT = 0
+DELETE_TWO_COUNT = 2
+EXPECTED_DELETED_COUNT = 4
+SMALL_FILE_SIZE = 100
+KB_FILE_SIZE = 1024
+LARGE_DATA_SIZE = 4096
+LARGE_INDEX_SIZE = 1024
+ROW_COUNT_EXAMPLE = 123
+EXACT_COUNT_ORDERS = 1300
+EXACT_COUNT_PRODUCTS = 600
+EXACT_COUNT_USERS = 95
+ESTIMATED_COUNT_USERS = 89
+TOTAL_DATA_SIZE_EXAMPLE = 90000
+TOTAL_INDEX_SIZE_EXAMPLE = 22000
+FIRST_MTIME = 1000
+SECOND_MTIME = 2000
+THIRD_MTIME = 3000
+FIRST_EPOCH = 100
+SECOND_EPOCH = 200
+BASE_DATE_STAMP = 20250101
+BASE_MTIME = 1000000
+MTIME_STEP = 100
+STREAM_TIMEOUT_CMD = "stream"
+ACCESS_DENIED = b"Access denied"
+UNKNOWN_DATABASE = b"Unknown database"
+DUMP_BYTES = b"-- SQL dump"
+FULL_DUMP_BYTES = b"-- full dump"
+COMPRESSED_DUMP_BYTES = b"-- compressed"
+TABLE_DUMP_BYTES = b"-- table dump"
+RESTORE_BYTES = b"-- restore data"
+GZIPPED_RESTORE_BYTES = b"-- gzipped data"
+GZIPPED_TABLE_BYTES = b"-- gzipped table data"
+BROKEN_PIPE_BYTES = b"-- pipe test data"
+META_TAG_MANUAL = "manual"
+META_TAG_AUTO = "pre_import_auto"
+DDL_USERS = "CREATE TABLE `users` (id INT)"
+BACKUP_PREFIX = "testdb"
+TABLE_USERS = "users"
+TABLE_ORDERS = "orders"
+TABLE_PRODUCTS = "products"
+TABLE_ALPHA = "alpha"
+TABLE_MANGO = "mango"
+TABLE_ZEBRA = "zebra"
 
 CFG = ConnectionConfig(
     host="localhost",
@@ -83,12 +135,17 @@ def _mock_popen_result(stdout_data=b"", returncode=0, stderr_data=b""):
     return mock_proc
 
 
+def _write_bytes_to_target(target, payload):
+    if target is not None and hasattr(target, "write"):
+        target.write(payload)
+
+
 # ==================== ConnectionConfig ====================
 
 class TestConnectionConfig:
     def test_defaults(self):
         cfg = ConnectionConfig(host="h", user="u", password="p", database="d")
-        assert cfg.port == 3306
+        assert cfg.port == DEFAULT_PORT
         assert cfg.charset == "utf8mb4"
 
     def test_frozen(self):
@@ -115,6 +172,26 @@ class TestBackwardCompat:
         with pytest.raises(TypeError, match="Missing required"):
             backup_database(output_dir=tmp_dir)
 
+    def test_config_with_extra_kwargs_raises_typeerror(self, tmp_dir):
+        with pytest.raises(TypeError, match="Unexpected keyword arguments"):
+            backup_database(
+                config=CFG,
+                output_dir=tmp_dir,
+                host="localhost",
+            )
+
+    def test_flat_kwargs_with_unknown_key_raises_typeerror(self, tmp_dir):
+        with pytest.warns(DeprecationWarning, match="flat keyword"):
+            with pytest.raises(TypeError, match="Unexpected keyword arguments"):
+                backup_database(
+                    host="localhost",
+                    user="root",
+                    password="secret",
+                    database="testdb",
+                    output_dir=tmp_dir,
+                    unknown_option=True,
+                )
+
 
 # ==================== backup_database ====================
 
@@ -122,7 +199,7 @@ class TestBackupDatabase:
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysqldump")
     @patch("yumoyi_common.db_backup.subprocess.run")
     def test_success(self, mock_run, mock_which, tmp_dir):
-        mock_run.side_effect = _mock_run_streaming(stdout_data=b"-- full dump")
+        mock_run.side_effect = _mock_run_streaming(stdout_data=FULL_DUMP_BYTES)
         result = backup_database(config=CFG, output_dir=tmp_dir)
 
         assert result.success is True
@@ -131,18 +208,18 @@ class TestBackupDatabase:
         assert result.duration >= 0
         assert result.tables is None  # full backup -> None
         assert Path(result.file_path).exists()
-        assert Path(result.file_path).read_bytes() == b"-- full dump"
+        assert Path(result.file_path).read_bytes() == FULL_DUMP_BYTES
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysqldump")
     @patch("yumoyi_common.db_backup.subprocess.Popen")
     def test_compressed(self, mock_popen, mock_which, tmp_dir):
-        mock_popen.return_value = _mock_popen_result(stdout_data=b"-- compressed")
+        mock_popen.return_value = _mock_popen_result(stdout_data=COMPRESSED_DUMP_BYTES)
         result = backup_database(config=CFG, output_dir=tmp_dir, compress=True)
 
         assert result.success is True
         assert result.file_path.endswith(".sql.gz")
         with gzip.open(result.file_path, "rb") as gz:
-            assert gz.read() == b"-- compressed"
+            assert gz.read() == COMPRESSED_DUMP_BYTES
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysqldump")
     @patch("yumoyi_common.db_backup.subprocess.run")
@@ -174,9 +251,9 @@ class TestBackupDatabase:
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysqldump")
     @patch("yumoyi_common.db_backup.subprocess.run",
-           side_effect=subprocess.TimeoutExpired("cmd", 5))
+           side_effect=subprocess.TimeoutExpired("cmd", DEFAULT_TIMEOUT))
     def test_timeout(self, mock_run, mock_which, tmp_dir):
-        result = backup_database(config=CFG, output_dir=tmp_dir, timeout=5)
+        result = backup_database(config=CFG, output_dir=tmp_dir, timeout=DEFAULT_TIMEOUT)
 
         assert result.success is False
         assert "timed out" in result.error
@@ -227,6 +304,37 @@ class TestBackupDatabase:
         assert "stdout" in dump_kwargs
         assert hasattr(dump_kwargs["stdout"], "write")
 
+    @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysqldump")
+    @patch(
+        "yumoyi_common.db_backup._stream_with_timeout",
+        side_effect=subprocess.TimeoutExpired(STREAM_TIMEOUT_CMD, DEFAULT_TIMEOUT),
+    )
+    @patch("yumoyi_common.db_backup.subprocess.Popen")
+    def test_compressed_stream_timeout(self, mock_popen, mock_stream, mock_which, tmp_dir):
+        mock_proc = _mock_popen_result(stdout_data=COMPRESSED_DUMP_BYTES)
+        mock_popen.return_value = mock_proc
+
+        result = backup_database(
+            config=CFG,
+            output_dir=tmp_dir,
+            compress=True,
+            timeout=DEFAULT_TIMEOUT,
+        )
+
+        assert result.success is False
+        assert "timed out" in result.error
+        mock_proc.kill.assert_called_once()
+        mock_proc.wait.assert_called()
+        assert not list(Path(tmp_dir).glob("*.sql.gz"))
+
+    @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysqldump")
+    @patch("yumoyi_common.db_backup.subprocess.run", side_effect=RuntimeError("boom"))
+    def test_unexpected_exception_returns_error(self, mock_run, mock_which, tmp_dir):
+        result = backup_database(config=CFG, output_dir=tmp_dir)
+
+        assert result.success is False
+        assert "boom" in result.error
+
 
 # ==================== backup_tables ====================
 
@@ -234,16 +342,16 @@ class TestBackupTables:
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysqldump")
     @patch("yumoyi_common.db_backup.subprocess.run")
     def test_success(self, mock_run, mock_which, tmp_dir):
-        mock_run.side_effect = _mock_run_streaming(stdout_data=b"-- table dump")
+        mock_run.side_effect = _mock_run_streaming(stdout_data=TABLE_DUMP_BYTES)
         result = backup_tables(
-            config=CFG, tables=["users", "orders"], output_dir=tmp_dir,
+            config=CFG, tables=[TABLE_USERS, TABLE_ORDERS], output_dir=tmp_dir,
         )
 
         assert result.success is True
-        assert result.tables == ["orders", "users"]  # sorted
+        assert result.tables == [TABLE_ORDERS, TABLE_USERS]  # sorted
         cmd = mock_run.call_args_list[0][0][0]
-        assert "users" in cmd
-        assert "orders" in cmd
+        assert TABLE_USERS in cmd
+        assert TABLE_ORDERS in cmd
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysqldump")
     @patch("yumoyi_common.db_backup.subprocess.run")
@@ -290,7 +398,7 @@ class TestRestoreBackup:
     @patch("yumoyi_common.db_backup.subprocess.run")
     def test_success_sql(self, mock_run, mock_which, tmp_path):
         backup = tmp_path / "backup.sql"
-        backup.write_bytes(b"-- restore data")
+        backup.write_bytes(RESTORE_BYTES)
         mock_run.return_value = _mock_proc(returncode=0)
 
         result = restore_backup(config=CFG, backup_file=str(backup))
@@ -307,7 +415,7 @@ class TestRestoreBackup:
     def test_success_gzipped(self, mock_popen, mock_which, tmp_path):
         backup = tmp_path / "backup.sql.gz"
         with gzip.open(backup, "wb") as gz:
-            gz.write(b"-- gzipped data")
+            gz.write(GZIPPED_RESTORE_BYTES)
 
         mock_proc = _mock_popen_result(returncode=0)
         mock_popen.return_value = mock_proc
@@ -318,7 +426,7 @@ class TestRestoreBackup:
         written = b"".join(
             call.args[0] for call in mock_proc.stdin.write.call_args_list
         )
-        assert written == b"-- gzipped data"
+        assert written == GZIPPED_RESTORE_BYTES
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
     @patch("yumoyi_common.db_backup.subprocess.run")
@@ -384,6 +492,58 @@ class TestRestoreBackup:
         restore_backup(config=CFG, backup_file=str(backup))
         call_kwargs = mock_run.call_args[1]
         assert "stdin" in call_kwargs
+
+    @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
+    @patch("yumoyi_common.db_backup._stream_with_timeout", side_effect=BrokenPipeError)
+    @patch("yumoyi_common.db_backup.subprocess.Popen")
+    def test_gzipped_broken_pipe_returns_success(self, mock_popen, mock_stream, mock_which, tmp_path):
+        backup = tmp_path / "backup.sql.gz"
+        with gzip.open(backup, "wb") as gz:
+            gz.write(BROKEN_PIPE_BYTES)
+
+        mock_proc = _mock_popen_result(returncode=0)
+        mock_popen.return_value = mock_proc
+
+        result = restore_backup(config=CFG, backup_file=str(backup))
+
+        assert result.success is True
+        mock_proc.wait.assert_called()
+
+    @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
+    @patch(
+        "yumoyi_common.db_backup._stream_with_timeout",
+        side_effect=subprocess.TimeoutExpired(STREAM_TIMEOUT_CMD, DEFAULT_TIMEOUT),
+    )
+    @patch("yumoyi_common.db_backup.subprocess.Popen")
+    def test_gzipped_timeout_returns_error(self, mock_popen, mock_stream, mock_which, tmp_path):
+        backup = tmp_path / "backup.sql.gz"
+        with gzip.open(backup, "wb") as gz:
+            gz.write(GZIPPED_RESTORE_BYTES)
+
+        mock_proc = _mock_popen_result(returncode=0)
+        mock_popen.return_value = mock_proc
+
+        result = restore_backup(
+            config=CFG,
+            backup_file=str(backup),
+            timeout=DEFAULT_TIMEOUT,
+        )
+
+        assert result.success is False
+        assert "timed out" in result.error
+        mock_proc.kill.assert_called_once()
+        mock_proc.wait.assert_called()
+
+    @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
+    @patch("yumoyi_common.db_backup.subprocess.run", side_effect=RuntimeError("boom"))
+    def test_unexpected_exception_returns_error(self, mock_run, mock_which, tmp_path):
+        backup = tmp_path / "backup.sql"
+        backup.write_bytes(RESTORE_BYTES)
+
+        result = restore_backup(config=CFG, backup_file=str(backup))
+
+        assert result.success is False
+        assert "boom" in result.error
 
 
 # ==================== cleanup_old_backups ====================
@@ -484,6 +644,20 @@ class TestCleanupOldBackups:
             output_dir=str(tmp_path), prefix="testdb", keep=0,
         )
         assert deleted == 1
+
+    def test_deletes_sidecar_metadata_file(self, tmp_path):
+        backup = tmp_path / "testdb_20250101.sql"
+        backup.write_text("data")
+        meta = Path(str(backup) + ".meta.json")
+        meta.write_text('{"table_count": 0}', encoding="utf-8")
+
+        deleted = cleanup_old_backups(
+            output_dir=str(tmp_path), prefix="testdb", keep=0,
+        )
+
+        assert deleted == 1
+        assert not backup.exists()
+        assert not meta.exists()
 
 
 # ==================== _table_suffix ====================
@@ -658,6 +832,108 @@ class TestListTablesResult:
         assert err.error == "Connection refused"
 
 
+# ==================== Metadata sidecar persistence ====================
+
+class TestMetadataPersistence:
+    def test_save_and_load_roundtrip_preserves_ddl(self, tmp_path):
+        backup = tmp_path / "testdb_users.sql"
+        backup.write_text("-- dump", encoding="utf-8")
+        metadata = BackupMetadata(
+            table_count=1,
+            table_stats=[
+                TableStats(
+                    name=TABLE_USERS,
+                    row_count=ROW_COUNT_EXAMPLE,
+                    estimated=False,
+                    data_size=LARGE_DATA_SIZE,
+                    index_size=LARGE_INDEX_SIZE,
+                    ddl=DDL_USERS,
+                ),
+            ],
+            total_data_size=LARGE_DATA_SIZE,
+            total_index_size=LARGE_INDEX_SIZE,
+            backup_tag=META_TAG_MANUAL,
+        )
+
+        save_backup_metadata(str(backup), metadata)
+        loaded = load_backup_metadata(str(backup))
+
+        assert loaded is not None
+        assert loaded.table_count == 1
+        assert loaded.backup_tag == META_TAG_MANUAL
+        assert loaded.table_stats[0].name == TABLE_USERS
+        assert loaded.table_stats[0].row_count == ROW_COUNT_EXAMPLE
+        assert loaded.table_stats[0].ddl == DDL_USERS
+
+    def test_load_missing_sidecar_returns_none(self, tmp_path):
+        backup = tmp_path / "testdb.sql"
+        backup.write_text("-- dump", encoding="utf-8")
+
+        assert load_backup_metadata(str(backup)) is None
+
+    def test_save_failure_is_ignored(self, tmp_path):
+        backup = tmp_path / "testdb.sql"
+        backup.write_text("-- dump", encoding="utf-8")
+        metadata = BackupMetadata(table_count=1)
+
+        with patch.object(Path, "write_text", side_effect=OSError("disk full")):
+            save_backup_metadata(str(backup), metadata)
+
+        assert not Path(str(backup) + ".meta.json").exists()
+
+    def test_invalid_json_returns_none(self, tmp_path):
+        backup = tmp_path / "testdb.sql"
+        backup.write_text("-- dump", encoding="utf-8")
+        Path(str(backup) + ".meta.json").write_text("{invalid", encoding="utf-8")
+
+        assert load_backup_metadata(str(backup)) is None
+
+
+# ==================== list_backups ====================
+
+class TestListBackups:
+    def test_lists_backups_with_metadata_and_iso_mtime(self, tmp_path):
+        old_backup = tmp_path / "testdb_20250101.sql"
+        new_backup = tmp_path / "testdb_20250102.sql.gz"
+        other_backup = tmp_path / "otherdb_20250102.sql"
+        old_backup.write_text("old", encoding="utf-8")
+        new_backup.write_text("new", encoding="utf-8")
+        other_backup.write_text("other", encoding="utf-8")
+        os.utime(old_backup, (FIRST_MTIME, FIRST_MTIME))
+        os.utime(new_backup, (SECOND_MTIME, SECOND_MTIME))
+        os.utime(other_backup, (THIRD_MTIME, THIRD_MTIME))
+
+        save_backup_metadata(
+            str(new_backup),
+            BackupMetadata(
+                table_count=1,
+                table_stats=[TableStats(name=TABLE_USERS, row_count=DEFAULT_KEEP)],
+            ),
+        )
+
+        result = list_backups(output_dir=str(tmp_path), prefix="testdb")
+
+        assert [item["name"] for item in result] == [
+            "testdb_20250102.sql.gz",
+            "testdb_20250101.sql",
+        ]
+        assert result[0]["metadata"] is not None
+        assert result[0]["metadata"].table_stats[0].name == TABLE_USERS
+        assert "T" in result[0]["mtime"]
+        assert result[1]["metadata"] is None
+
+    def test_nonexistent_dir_returns_empty(self):
+        assert list_backups(output_dir="/nonexistent/path") == []
+
+    def test_skips_directory_entries(self, tmp_path):
+        (tmp_path / "nested").mkdir()
+        (tmp_path / "testdb_20250101.sql").write_text("dump", encoding="utf-8")
+
+        result = list_backups(output_dir=str(tmp_path), prefix=BACKUP_PREFIX)
+
+        assert len(result) == 1
+
+
 # ==================== _collect_metadata ====================
 
 # info_schema output format: "table_name\test_rows\tdata_len\tindex_len"
@@ -672,25 +948,25 @@ class TestCollectMetadata:
         """Full backup: info_schema + COUNT(*) per table, sizes populated."""
         mock_run.side_effect = [
             _mock_proc(returncode=0, stdout=_INFO_3_TABLES),  # info_schema
-            _mock_proc(returncode=0, stdout=b"1300"),          # COUNT orders
-            _mock_proc(returncode=0, stdout=b"600"),           # COUNT products
-            _mock_proc(returncode=0, stdout=b"95"),            # COUNT users
+            _mock_proc(returncode=0, stdout=str(EXACT_COUNT_ORDERS).encode("ascii")),
+            _mock_proc(returncode=0, stdout=str(EXACT_COUNT_PRODUCTS).encode("ascii")),
+            _mock_proc(returncode=0, stdout=str(EXACT_COUNT_USERS).encode("ascii")),
         ]
 
-        meta = _collect_metadata(CFG, tables=None, mysql_path="mysql", timeout=30)
+        meta = _collect_metadata(CFG, tables=None, mysql_path="mysql", timeout=DEFAULT_TIMEOUT_LONG)
 
         assert meta is not None
         assert meta.table_count == 3
         # Exact counts used
-        assert meta.table_stats[0].name == "orders"
-        assert meta.table_stats[0].row_count == 1300
+        assert meta.table_stats[0].name == TABLE_ORDERS
+        assert meta.table_stats[0].row_count == EXACT_COUNT_ORDERS
         assert meta.table_stats[0].estimated is False
         # Sizes from info_schema
         assert meta.table_stats[0].data_size == 50000
         assert meta.table_stats[0].index_size == 12000
         # Totals
-        assert meta.total_data_size == 90000
-        assert meta.total_index_size == 22000
+        assert meta.total_data_size == TOTAL_DATA_SIZE_EXAMPLE
+        assert meta.total_index_size == TOTAL_INDEX_SIZE_EXAMPLE
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
     @patch("yumoyi_common.db_backup.subprocess.run")
@@ -698,14 +974,14 @@ class TestCollectMetadata:
         """COUNT(*) timeout -> fall back to info_schema estimate, mark estimated=True."""
         mock_run.side_effect = [
             _mock_proc(returncode=0, stdout=_INFO_1_TABLE),       # info_schema
-            subprocess.TimeoutExpired("cmd", 5),                   # COUNT times out
+            subprocess.TimeoutExpired("cmd", DEFAULT_TIMEOUT),     # COUNT times out
         ]
 
-        meta = _collect_metadata(CFG, tables=None, mysql_path="mysql", timeout=30)
+        meta = _collect_metadata(CFG, tables=None, mysql_path="mysql", timeout=DEFAULT_TIMEOUT_LONG)
 
         assert meta is not None
-        assert meta.table_stats[0].name == "users"
-        assert meta.table_stats[0].row_count == 89      # fallback to estimate
+        assert meta.table_stats[0].name == TABLE_USERS
+        assert meta.table_stats[0].row_count == ESTIMATED_COUNT_USERS
         assert meta.table_stats[0].estimated is True
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
@@ -714,16 +990,16 @@ class TestCollectMetadata:
         """Table backup: exact counts + DDL."""
         mock_run.side_effect = [
             _mock_proc(returncode=0, stdout=_INFO_1_TABLE),                    # info_schema
-            _mock_proc(returncode=0, stdout=b"95"),                            # COUNT users
-            _mock_proc(returncode=0, stdout=b"users\tCREATE TABLE `users` (id INT)\n"),  # DDL
+            _mock_proc(returncode=0, stdout=str(EXACT_COUNT_USERS).encode("ascii")),
+            _mock_proc(returncode=0, stdout=f"{TABLE_USERS}\t{DDL_USERS}\n".encode("utf-8")),
         ]
 
         meta = _collect_metadata(
-            CFG, tables=["users"], mysql_path="mysql", timeout=30,
+            CFG, tables=[TABLE_USERS], mysql_path="mysql", timeout=DEFAULT_TIMEOUT_LONG,
         )
 
         assert meta is not None
-        assert meta.table_stats[0].row_count == 95
+        assert meta.table_stats[0].row_count == EXACT_COUNT_USERS
         assert meta.table_stats[0].estimated is False
         assert "CREATE TABLE" in meta.table_stats[0].ddl
 
@@ -732,25 +1008,25 @@ class TestCollectMetadata:
     def test_backup_tag_stored(self, mock_run, mock_which):
         mock_run.side_effect = [
             _mock_proc(returncode=0, stdout=_INFO_1_TABLE),
-            _mock_proc(returncode=0, stdout=b"95"),
+            _mock_proc(returncode=0, stdout=str(EXACT_COUNT_USERS).encode("ascii")),
         ]
         meta = _collect_metadata(
-            CFG, tables=None, mysql_path="mysql", timeout=30,
-            tag="pre_import_auto",
+            CFG, tables=None, mysql_path="mysql", timeout=DEFAULT_TIMEOUT_LONG,
+            tag=META_TAG_AUTO,
         )
         assert meta is not None
-        assert meta.backup_tag == "pre_import_auto"
+        assert meta.backup_tag == META_TAG_AUTO
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
     @patch("yumoyi_common.db_backup.subprocess.run")
     def test_metadata_failure_returns_none(self, mock_run, mock_which):
-        mock_run.return_value = _mock_proc(returncode=1, stderr=b"Access denied")
-        meta = _collect_metadata(CFG, tables=None, mysql_path="mysql", timeout=30)
+        mock_run.return_value = _mock_proc(returncode=1, stderr=ACCESS_DENIED)
+        meta = _collect_metadata(CFG, tables=None, mysql_path="mysql", timeout=DEFAULT_TIMEOUT_LONG)
         assert meta is None
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value=None)
     def test_mysql_not_found_returns_none(self, mock_which):
-        meta = _collect_metadata(CFG, tables=None, mysql_path="mysql", timeout=30)
+        meta = _collect_metadata(CFG, tables=None, mysql_path="mysql", timeout=DEFAULT_TIMEOUT_LONG)
         assert meta is None
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
@@ -776,8 +1052,7 @@ class TestCollectMetadata:
             side_effect.call_idx += 1
             if idx == 0:
                 target = kwargs.get("stdout")
-                if target and hasattr(target, "write"):
-                    target.write(b"-- dump")
+                _write_bytes_to_target(target, DUMP_BYTES)
                 return calls[0]
             return calls[idx]
         side_effect.call_idx = 0
@@ -799,8 +1074,7 @@ class TestCollectMetadata:
         def side_effect(cmd, **kwargs):
             target = kwargs.get("stdout")
             if target and hasattr(target, "write"):
-                # mysqldump call: write to file
-                target.write(b"-- dump")
+                _write_bytes_to_target(target, DUMP_BYTES)
                 proc = MagicMock()
                 proc.returncode = 0
                 proc.stderr = b""

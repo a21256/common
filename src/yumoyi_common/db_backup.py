@@ -463,6 +463,7 @@ def save_backup_metadata(backup_file_path: str, metadata: BackupMetadata) -> Non
                 "estimated": t.estimated,
                 "data_size": t.data_size,
                 "index_size": t.index_size,
+                "ddl": t.ddl,
             }
             for t in metadata.table_stats
         ],
@@ -496,6 +497,7 @@ def load_backup_metadata(backup_file_path: str) -> Optional[BackupMetadata]:
                 estimated=t.get("estimated", False),
                 data_size=t.get("data_size", 0),
                 index_size=t.get("index_size", 0),
+                ddl=t.get("ddl", ""),
             )
             for t in data.get("tables", [])
         ]
@@ -519,7 +521,7 @@ def list_backups(
     """List backup files in *output_dir*, newest first.
 
     Each item is a dict with keys: ``name``, ``file_path``, ``size``,
-    ``mtime`` (ISO formatted string), ``metadata`` (BackupMetadata or None).
+    ``mtime`` (ISO 8601 string), ``metadata`` (BackupMetadata or None).
 
     If *prefix* is given, only files whose name starts with
     ``{prefix}_`` are returned.
@@ -542,7 +544,7 @@ def list_backups(
             "name": p.name,
             "file_path": str(p),
             "size": stat.st_size,
-            "mtime": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+            "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
             "metadata": load_backup_metadata(str(p)),
         })
 
