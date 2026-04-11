@@ -5,7 +5,7 @@ Shared Python utilities for yumoyi projects.
 ## Modules
 
 - **column_inference** -- Excel column auto-inference engine (header keywords + data format analysis)
-- **db_backup** -- MySQL backup/restore via mysqldump CLI (streaming, compression, cleanup)
+- **db_backup** -- MySQL backup/restore via mysqldump CLI (streaming, compression, metadata, cleanup)
 - **django_db_backup** -- Django integration layer (auto-read settings, management commands)
 
 ## Install
@@ -43,7 +43,7 @@ mapping = infer_columns(ws, fields)
 # mapping = {"name": 1, "amount": 3, "date": 4}  (1-based column indices)
 ```
 
-### Database Backup (pure Python, no Django)
+### Database Backup
 
 ```python
 from yumoyi_common.db_backup import (
@@ -57,7 +57,23 @@ config = ConnectionConfig(host="localhost", user="root", password="pwd", databas
 result = backup_database(config=config, output_dir="/backups", compress=True)
 # result.success, result.file_path, result.file_size, result.duration
 
-# Specific tables
+# Backup with metadata and audit tag
+result = backup_database(config=config, output_dir="/backups", tag="pre_import_auto")
+# result.metadata.table_count, result.metadata.table_stats, result.metadata.backup_tag
+# result.metadata.total_data_size, result.metadata.total_index_size
+
+# Per-table stats: exact row count (SELECT COUNT(*)), data/index size
+for ts in result.metadata.table_stats:
+    print(f"{ts.name}: {ts.row_count} rows, data={ts.data_size}, estimated={ts.estimated}")
+    # ts.estimated is True only if COUNT(*) timed out and fell back to info_schema
+
+# Skip metadata collection for speed
+result = backup_database(config=config, output_dir="/backups", collect_metadata=False)
+
+# Tune COUNT(*) timeout for large tables (default 5s)
+result = backup_database(config=config, output_dir="/backups", count_timeout=30)
+
+# Specific tables (sorted for deterministic filenames)
 result = backup_tables(config=config, tables=["users", "orders"], output_dir="/backups")
 
 # List tables (ListTablesResult distinguishes empty DB from connection error)
@@ -71,10 +87,14 @@ restore_backup(config=config, backup_file="/backups/mydb_20250101_120000.sql")
 cleanup_old_backups(output_dir="/backups", prefix="mydb", keep=5)
 ```
 
-Custom mysqldump/mysql path (e.g. non-standard install):
+Custom mysqldump/mysql path (e.g. non-standard install, container):
 
 ```python
-backup_database(config=config, output_dir="/backups", mysqldump_path="/usr/local/mysql/bin/mysqldump")
+backup_database(
+    config=config, output_dir="/backups",
+    mysqldump_path="/usr/local/mysql/bin/mysqldump",
+    mysql_path="/usr/local/mysql/bin/mysql",  # used for metadata collection
+)
 restore_backup(config=config, backup_file="dump.sql", mysql_path="/usr/local/mysql/bin/mysql")
 ```
 
@@ -87,21 +107,45 @@ from yumoyi_common.django_db_backup import (
 )
 
 # Reads connection params from settings.DATABASES automatically
-result = backup_current_database(output_dir="/backups")
-# result.migration_state contains Django migration snapshot at backup time
+result = backup_current_database(output_dir="/backups", tag="manual")
+# result.migration_state -- Django migration snapshot at backup time
+# result.metadata -- table counts, row counts, sizes
 ```
 
 ### Django Management Commands
 
 ```bash
+# Backup
 python manage.py dbbackup --output-dir /backups
 python manage.py dbbackup --output-dir /backups --tables users orders --compress
+python manage.py dbbackup --output-dir /backups --tag pre_import_auto
 python manage.py dbbackup --output-dir /backups --mysqldump-path /usr/local/bin/mysqldump
+python manage.py dbbackup --output-dir /backups --mysql-path /usr/local/bin/mysql
+python manage.py dbbackup --output-dir /backups --cleanup 5
+
+# List tables
 python manage.py dbbackup --list-tables
 python manage.py dbbackup --list-tables --mysql-path /usr/local/bin/mysql
+
+# Restore
 python manage.py dbrestore /backups/mydb_20250101_120000.sql
 python manage.py dbrestore dump.sql --mysql-path /usr/local/bin/mysql
+python manage.py dbrestore dump.sql --timeout 600
+python manage.py dbrestore dump.sql --extra-args --force
 ```
+
+Example backup output:
+
+```
+Backup saved to /backups/mydb_20260411_120000.sql.gz (23.9 KB, 0.2s)
+  Tables: 15 (data: 2.1 MB, index: 856.0 KB)
+  Tag: pre_import_auto
+    auth_permission                                 48 rows  12.0 KB
+    stock_inventoryrecord                          258 rows  156.0 KB
+    stock_product                                 ~210 rows  89.0 KB
+```
+
+(`~` indicates COUNT(*) timed out, row count is an estimate from information_schema)
 
 ## Migrating from 0.2.x
 
