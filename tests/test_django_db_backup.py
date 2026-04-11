@@ -384,8 +384,8 @@ class TestDbbackupCommand:
             metadata=BackupMetadata(
                 table_count=2,
                 table_stats=[
-                    TableStats(name="orders", row_count=5000),
-                    TableStats(name="users", row_count=123),
+                    TableStats(name="orders", estimated_row_count=5000),
+                    TableStats(name="users", estimated_row_count=123),
                 ],
             ),
         )
@@ -404,6 +404,7 @@ class TestDbbackupCommand:
         output = out.getvalue()
         assert "Tables: 2" in output
         assert "orders" in output
+        assert "~" in output  # approximate indicator
         assert "5,000" in output
         assert "users" in output
         assert "123" in output

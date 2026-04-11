@@ -60,9 +60,14 @@ class ConnectionConfig:
 
 @dataclass(frozen=True)
 class TableStats:
-    """Per-table statistics collected at backup time."""
+    """Per-table statistics collected at backup time.
+
+    ``estimated_row_count`` comes from ``information_schema.TABLES.TABLE_ROWS``
+    which is an approximation for InnoDB (can differ from the true count
+    by 10-40%).  Use ``SELECT COUNT(*)`` if exact figures are required.
+    """
     name: str
-    row_count: int
+    estimated_row_count: int
     ddl: str = ""  # CREATE TABLE statement; populated for table-level backups
 
 
@@ -586,7 +591,7 @@ def _collect_metadata(
         for tname in sorted(row_counts):
             stats.append(TableStats(
                 name=tname,
-                row_count=row_counts[tname],
+                estimated_row_count=row_counts[tname],
                 ddl=ddl_map.get(tname, ""),
             ))
 

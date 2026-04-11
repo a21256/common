@@ -72,6 +72,7 @@ class Command(BaseCommand):
             compress=options["compress"],
             db_alias=options["database"],
             mysqldump_path=options["mysqldump_path"],
+            mysql_path=options["mysql_path"],
         )
 
         if not result.success:
@@ -86,7 +87,9 @@ class Command(BaseCommand):
             m = result.metadata
             self.stdout.write(f"  Tables: {m.table_count}")
             for ts in m.table_stats:
-                self.stdout.write(f"    {ts.name:<40s} {ts.row_count:>10,} rows")
+                self.stdout.write(
+                    f"    {ts.name:<40s} ~{ts.estimated_row_count:>10,} rows"
+                )
 
         if options["cleanup"] > 0:
             deleted = cleanup_current_database_backups(

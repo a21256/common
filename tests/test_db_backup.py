@@ -675,10 +675,10 @@ class TestCollectMetadata:
         assert meta is not None
         assert meta.table_count == 3
         assert meta.table_stats[0].name == "orders"
-        assert meta.table_stats[0].row_count == 1234
+        assert meta.table_stats[0].estimated_row_count == 1234
         assert meta.table_stats[0].ddl == ""
         assert meta.table_stats[2].name == "users"
-        assert meta.table_stats[2].row_count == 89
+        assert meta.table_stats[2].estimated_row_count == 89
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
     @patch("yumoyi_common.db_backup.subprocess.run")
@@ -697,7 +697,7 @@ class TestCollectMetadata:
         assert meta is not None
         assert meta.table_count == 1
         assert meta.table_stats[0].name == "users"
-        assert meta.table_stats[0].row_count == 89
+        assert meta.table_stats[0].estimated_row_count == 89
         assert "CREATE TABLE" in meta.table_stats[0].ddl
 
     @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
@@ -758,4 +758,4 @@ class TestCollectMetadata:
         assert result.metadata is not None
         assert result.metadata.table_count == 2
         assert result.metadata.table_stats[0].name == "t1"
-        assert result.metadata.table_stats[0].row_count == 100
+        assert result.metadata.table_stats[0].estimated_row_count == 100
