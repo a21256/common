@@ -59,14 +59,20 @@ class FieldSpec:
 
 # ============================================================
 # Scoring constants
+#
+# Priority order: data format > exact header keyword > partial keyword.
+# Scores are additive within a column, and the highest-scoring column
+# wins for each field.  The spread (100 > 80 > 50) ensures that a
+# column whose *data* matches the expected format always beats a column
+# that merely has a matching header keyword, even an exact one.
 # ============================================================
 
-SCORE_FORMAT_MATCH = 100
-SCORE_KEYWORD_EXACT = 80
-SCORE_KEYWORD_CONTAINS = 50
+SCORE_FORMAT_MATCH = 100       # data cells pass the format_test function
+SCORE_KEYWORD_EXACT = 80       # header matches a keyword exactly (case/space insensitive)
+SCORE_KEYWORD_CONTAINS = 50    # header contains a keyword or vice versa
 
-SAMPLE_ROWS = 10
-FORMAT_MATCH_THRESHOLD = 0.5
+SAMPLE_ROWS = 10               # max data rows sampled for format testing
+FORMAT_MATCH_THRESHOLD = 0.5   # fraction of sampled rows that must pass format_test
 
 # Excel serial-number range treated as "date-like" by is_date_like().
 # Override via the serial_range parameter when the default is too narrow

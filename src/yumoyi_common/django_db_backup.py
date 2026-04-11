@@ -88,6 +88,7 @@ def backup_current_database(
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     mysqldump_path: str = DEFAULT_MYSQLDUMP,
     extra_args: Sequence[str] = (),
+    collect_metadata: bool = True,
 ) -> BackupResult:
     """Backup the current Django database (full or specific tables).
 
@@ -102,14 +103,14 @@ def backup_current_database(
             config=config, tables=tables,
             output_dir=output_dir, compress=compress,
             timeout=timeout, mysqldump_path=mysqldump_path,
-            extra_args=extra_args,
+            extra_args=extra_args, collect_metadata=collect_metadata,
         )
     else:
         result = backup_database(
             config=config,
             output_dir=output_dir, compress=compress,
             timeout=timeout, mysqldump_path=mysqldump_path,
-            extra_args=extra_args,
+            extra_args=extra_args, collect_metadata=collect_metadata,
         )
 
     if result.success and migration_state:

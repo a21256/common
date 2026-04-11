@@ -38,6 +38,7 @@ EXT_SQL = ".sql"
 EXT_SQL_GZ = ".sql.gz"
 MYSQL_PWD_ENV = "MYSQL_PWD"
 DEFAULT_DUMP_FLAGS = ("--single-transaction", "--routines", "--triggers")
+STDERR_DRAIN_TIMEOUT = 5  # seconds to wait for stderr thread after main I/O completes
 
 
 # ==================== Config & Result dataclasses ====================
@@ -87,6 +88,7 @@ class BackupResult:
 @dataclass
 class RestoreResult:
     success: bool
+    file_path: str = ""
     duration: float = 0.0
     error: str = ""
 
@@ -145,12 +147,16 @@ def backup_database(
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     mysqldump_path: str = DEFAULT_MYSQLDUMP,
     extra_args: Sequence[str] = (),
+    collect_metadata: bool = True,
     **kwargs,
 ) -> BackupResult:
     """Full database backup via mysqldump.
 
     Streams mysqldump output directly to file to avoid holding the
     entire dump in memory.
+
+    Set ``collect_metadata=False`` to skip post-backup table statistics
+    (saves one round-trip to the database).
 
     .. deprecated:: 0.3.0
        Passing ``host``, ``user``, ``password``, ``database`` as flat
@@ -163,7 +169,7 @@ def backup_database(
         config=config, tables=None, output_dir=output_dir,
         compress=compress, timeout=timeout,
         mysqldump_path=mysqldump_path, mysql_path=DEFAULT_MYSQL,
-        extra_args=extra_args,
+        extra_args=extra_args, collect_metadata=collect_metadata,
     )
 
 
@@ -176,9 +182,12 @@ def backup_tables(
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     mysqldump_path: str = DEFAULT_MYSQLDUMP,
     extra_args: Sequence[str] = (),
+    collect_metadata: bool = True,
     **kwargs,
 ) -> BackupResult:
     """Backup specific tables via mysqldump.
+
+    Set ``collect_metadata=False`` to skip post-backup table statistics.
 
     .. deprecated:: 0.3.0
        Flat connection keyword arguments are deprecated.
@@ -193,7 +202,7 @@ def backup_tables(
         config=config, tables=sorted(tables), output_dir=output_dir,
         compress=compress, timeout=timeout,
         mysqldump_path=mysqldump_path, mysql_path=DEFAULT_MYSQL,
-        extra_args=extra_args,
+        extra_args=extra_args, collect_metadata=collect_metadata,
     )
 
 
@@ -447,6 +456,25 @@ def _drain_pipe_async(pipe):
     return t, result
 
 
+def _escape_sql_identifier(name: str) -> str:
+    """Escape a value for use in a SQL string literal (single-quoted).
+
+    Escapes single quotes by doubling them: O'Brien -> 'O''Brien'.
+    Escapes backslashes: a\\b -> 'a\\\\b'.
+    """
+    escaped = name.replace("\\", "\\\\").replace("'", "''")
+    return f"'{escaped}'"
+
+
+def _escape_backtick_identifier(name: str) -> str:
+    """Escape a value for use as a backtick-quoted SQL identifier.
+
+    Escapes embedded backticks by doubling them: my`table -> `my``table`.
+    """
+    escaped = name.replace("`", "``")
+    return f"`{escaped}`"
+
+
 def _safe_unlink(path: Path) -> None:
     """Remove file if it exists, ignoring errors."""
     try:
@@ -476,13 +504,14 @@ def _collect_metadata(
 
     try:
         # Step 1: row counts from information_schema (fast, no table scan)
+        db_escaped = _escape_sql_identifier(config.database)
         row_count_query = (
             "SELECT TABLE_NAME, TABLE_ROWS "
             "FROM information_schema.TABLES "
-            f"WHERE TABLE_SCHEMA = '{config.database}'"
+            f"WHERE TABLE_SCHEMA = {db_escaped}"
         )
         if tables:
-            quoted = ", ".join(f"'{t}'" for t in tables)
+            quoted = ", ".join(_escape_sql_identifier(t) for t in tables)
             row_count_query += f" AND TABLE_NAME IN ({quoted})"
         row_count_query += " ORDER BY TABLE_NAME"
 
@@ -523,8 +552,9 @@ def _collect_metadata(
         ddl_map: dict = {}
         if tables:
             for tname in tables:
+                escaped = _escape_backtick_identifier(tname)
                 ddl_proc = subprocess.run(
-                    [*cmd_base, "-e", f"SHOW CREATE TABLE `{tname}`",
+                    [*cmd_base, "-e", f"SHOW CREATE TABLE {escaped}",
                      config.database],
                     capture_output=True, env=env, timeout=timeout,
                 )
@@ -561,6 +591,7 @@ def _run_backup(
     mysqldump_path: str,
     mysql_path: str,
     extra_args: Sequence[str],
+    collect_metadata: bool,
 ) -> BackupResult:
     """Internal: execute mysqldump and stream output to file."""
     out_dir = Path(output_dir)
@@ -603,14 +634,14 @@ def _run_backup(
                 with gzip.open(file_path, "wb") as gz:
                     remaining = timeout - (time.monotonic() - start)
                     _stream_with_timeout(proc.stdout, gz, remaining)
-                remaining = max(1, int(timeout - (time.monotonic() - start)))
+                remaining = max(1, timeout - int(time.monotonic() - start))
                 proc.wait(timeout=remaining)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
                 raise
             finally:
-                stderr_t.join(5)
+                stderr_t.join(STDERR_DRAIN_TIMEOUT)
             stderr_data = stderr_buf[0] if stderr_buf else b""
         else:
             # Stream: mysqldump stdout -> plain file directly
@@ -633,9 +664,11 @@ def _run_backup(
         logger.info("Backup %s -> %s (%d bytes, %.1fs)",
                      config.database, filename, file_size, duration)
 
-        metadata = _collect_metadata(
-            config, tables, mysql_path=mysql_path, timeout=timeout,
-        )
+        metadata = None
+        if collect_metadata:
+            metadata = _collect_metadata(
+                config, tables, mysql_path=mysql_path, timeout=timeout,
+            )
 
         return BackupResult(
             success=True, file_path=str(file_path), file_size=file_size,
@@ -668,11 +701,13 @@ def _run_restore(
     """Internal: pipe backup file into mysql client."""
     backup_path = Path(backup_file)
     if not backup_path.exists():
-        return RestoreResult(success=False, error=f"Backup file not found: {backup_file}")
+        return RestoreResult(success=False, file_path=backup_file,
+                             error=f"Backup file not found: {backup_file}")
 
     mysql_bin = shutil.which(mysql_path)
     if not mysql_bin:
-        return RestoreResult(success=False, error=f"mysql client not found: {mysql_path}")
+        return RestoreResult(success=False, file_path=backup_file,
+                             error=f"mysql client not found: {mysql_path}")
 
     cmd = [
         mysql_bin,
@@ -700,7 +735,7 @@ def _run_restore(
                     remaining = timeout - (time.monotonic() - start)
                     _stream_with_timeout(gz, proc.stdin, remaining)
                 proc.stdin.close()
-                remaining = max(1, int(timeout - (time.monotonic() - start)))
+                remaining = max(1, timeout - int(time.monotonic() - start))
                 proc.wait(timeout=remaining)
             except BrokenPipeError:
                 proc.wait()
@@ -709,7 +744,7 @@ def _run_restore(
                 proc.wait()
                 raise
             finally:
-                stderr_t.join(5)
+                stderr_t.join(STDERR_DRAIN_TIMEOUT)
             stderr_data = stderr_buf[0] if stderr_buf else b""
         else:
             # Stream: file -> mysql stdin directly
@@ -724,19 +759,21 @@ def _run_restore(
         if proc.returncode != 0:
             err = stderr_data.decode("utf-8", errors="replace").strip()
             logger.error("%s failed: %s", log_prefix, err)
-            return RestoreResult(success=False, duration=duration, error=err)
+            return RestoreResult(success=False, file_path=backup_file,
+                                 duration=duration, error=err)
 
         logger.info("%s: %s -> %s in %.1fs",
                      log_prefix, backup_file, config.database, duration)
-        return RestoreResult(success=True, duration=duration)
+        return RestoreResult(success=True, file_path=backup_file, duration=duration)
 
     except subprocess.TimeoutExpired:
         duration = time.monotonic() - start
         return RestoreResult(
-            success=False, duration=duration,
+            success=False, file_path=backup_file, duration=duration,
             error=f"{log_prefix} timed out after {timeout}s",
         )
     except Exception as exc:
         duration = time.monotonic() - start
         logger.exception("%s failed", log_prefix)
-        return RestoreResult(success=False, duration=duration, error=str(exc))
+        return RestoreResult(success=False, file_path=backup_file,
+                             duration=duration, error=str(exc))
