@@ -127,7 +127,7 @@ def _compat_config(kwargs: dict) -> ConnectionConfig:
         DeprecationWarning,
         stacklevel=3,
     )
-    return ConnectionConfig(
+    config = ConnectionConfig(
         host=kwargs.pop("host"),
         user=kwargs.pop("user"),
         password=kwargs.pop("password"),
@@ -135,6 +135,10 @@ def _compat_config(kwargs: dict) -> ConnectionConfig:
         port=kwargs.pop("port", DEFAULT_PORT),
         charset=kwargs.pop("charset", DEFAULT_CHARSET),
     )
+    if kwargs:
+        unexpected = ", ".join(sorted(kwargs))
+        raise TypeError(f"Unexpected keyword arguments: {unexpected}")
+    return config
 
 
 # ==================== Core functions ====================
@@ -146,6 +150,7 @@ def backup_database(
     compress: bool = False,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     mysqldump_path: str = DEFAULT_MYSQLDUMP,
+    mysql_path: str = DEFAULT_MYSQL,
     extra_args: Sequence[str] = (),
     collect_metadata: bool = True,
     **kwargs,
@@ -165,10 +170,12 @@ def backup_database(
     """
     if config is None:
         config = _compat_config(kwargs)
+    elif kwargs:
+        raise TypeError(f"Unexpected keyword arguments: {', '.join(sorted(kwargs))}")
     return _run_backup(
         config=config, tables=None, output_dir=output_dir,
         compress=compress, timeout=timeout,
-        mysqldump_path=mysqldump_path, mysql_path=DEFAULT_MYSQL,
+        mysqldump_path=mysqldump_path, mysql_path=mysql_path,
         extra_args=extra_args, collect_metadata=collect_metadata,
     )
 
@@ -181,6 +188,7 @@ def backup_tables(
     compress: bool = False,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
     mysqldump_path: str = DEFAULT_MYSQLDUMP,
+    mysql_path: str = DEFAULT_MYSQL,
     extra_args: Sequence[str] = (),
     collect_metadata: bool = True,
     **kwargs,
@@ -195,13 +203,15 @@ def backup_tables(
     """
     if config is None:
         config = _compat_config(kwargs)
+    elif kwargs:
+        raise TypeError(f"Unexpected keyword arguments: {', '.join(sorted(kwargs))}")
     if not tables:
         return BackupResult(success=False, error="No tables specified")
 
     return _run_backup(
         config=config, tables=sorted(tables), output_dir=output_dir,
         compress=compress, timeout=timeout,
-        mysqldump_path=mysqldump_path, mysql_path=DEFAULT_MYSQL,
+        mysqldump_path=mysqldump_path, mysql_path=mysql_path,
         extra_args=extra_args, collect_metadata=collect_metadata,
     )
 
@@ -226,6 +236,8 @@ def restore_backup(
     """
     if config is None:
         config = _compat_config(kwargs)
+    elif kwargs:
+        raise TypeError(f"Unexpected keyword arguments: {', '.join(sorted(kwargs))}")
     return _run_restore(
         config=config, backup_file=backup_file,
         timeout=timeout, mysql_path=mysql_path,
@@ -256,6 +268,8 @@ def restore_tables(
     """
     if config is None:
         config = _compat_config(kwargs)
+    elif kwargs:
+        raise TypeError(f"Unexpected keyword arguments: {', '.join(sorted(kwargs))}")
     return _run_restore(
         config=config, backup_file=backup_file,
         timeout=timeout, mysql_path=mysql_path,
@@ -281,6 +295,8 @@ def list_tables(
     """
     if config is None:
         config = _compat_config(kwargs)
+    elif kwargs:
+        raise TypeError(f"Unexpected keyword arguments: {', '.join(sorted(kwargs))}")
     mysql_bin = shutil.which(mysql_path)
     if not mysql_bin:
         return ListTablesResult(
