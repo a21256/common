@@ -5,6 +5,8 @@ from django.core.management.base import BaseCommand, CommandError
 from yumoyi_common.db_backup import DEFAULT_MYSQL, DEFAULT_TIMEOUT_SECONDS
 from yumoyi_common.django_db_backup import restore_to_current_database
 
+_DEFAULT_DB_ALIAS = "default"
+
 
 class Command(BaseCommand):
     help = "Restore the database from a mysqldump backup file"
@@ -15,7 +17,7 @@ class Command(BaseCommand):
             help="Path to the .sql or .sql.gz backup file",
         )
         parser.add_argument(
-            "--database", default="default",
+            "--database", default=_DEFAULT_DB_ALIAS,
             help="Django database alias (default: 'default')",
         )
         parser.add_argument(

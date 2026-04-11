@@ -9,14 +9,18 @@ from yumoyi_common.django_db_backup import (
     list_current_database_tables,
 )
 
+_BYTES_PER_UNIT = 1024
+_SIZE_UNITS = ("B", "KB", "MB", "GB", "TB")
+_DEFAULT_DB_ALIAS = "default"
+
 
 def _human_size(nbytes: int) -> str:
     """Format byte count as human-readable string."""
-    for unit in ("B", "KB", "MB", "GB"):
-        if abs(nbytes) < 1024:
-            return f"{nbytes:,.1f} {unit}" if unit != "B" else f"{nbytes:,} B"
-        nbytes /= 1024
-    return f"{nbytes:,.1f} TB"
+    for unit in _SIZE_UNITS[:-1]:
+        if abs(nbytes) < _BYTES_PER_UNIT:
+            return f"{nbytes:,.1f} {unit}" if unit != _SIZE_UNITS[0] else f"{nbytes:,} B"
+        nbytes /= _BYTES_PER_UNIT
+    return f"{nbytes:,.1f} {_SIZE_UNITS[-1]}"
 
 
 class Command(BaseCommand):
@@ -36,7 +40,7 @@ class Command(BaseCommand):
             help="Compress output with gzip (.sql.gz)",
         )
         parser.add_argument(
-            "--database", default="default",
+            "--database", default=_DEFAULT_DB_ALIAS,
             help="Django database alias (default: 'default')",
         )
         parser.add_argument(
