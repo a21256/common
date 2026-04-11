@@ -2,7 +2,7 @@
 
 from django.core.management.base import BaseCommand, CommandError
 
-from yumoyi_common.db_backup import DEFAULT_MYSQL
+from yumoyi_common.db_backup import DEFAULT_MYSQL, DEFAULT_TIMEOUT_SECONDS
 from yumoyi_common.django_db_backup import restore_to_current_database
 
 
@@ -22,12 +22,22 @@ class Command(BaseCommand):
             "--mysql-path", default=DEFAULT_MYSQL,
             help=f"Path to mysql binary (default: '{DEFAULT_MYSQL}' from PATH)",
         )
+        parser.add_argument(
+            "--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS,
+            help=f"Timeout in seconds (default: {DEFAULT_TIMEOUT_SECONDS})",
+        )
+        parser.add_argument(
+            "--extra-args", nargs="*", default=[],
+            help="Extra arguments to pass to mysql client",
+        )
 
     def handle(self, *args, **options):
         result = restore_to_current_database(
             backup_file=options["backup_file"],
             db_alias=options["database"],
             mysql_path=options["mysql_path"],
+            timeout=options["timeout"],
+            extra_args=options["extra_args"],
         )
 
         if not result.success:

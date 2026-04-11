@@ -425,7 +425,8 @@ class TestDrestoreCommand:
         cmd = Command(stdout=out)
         cmd.style.SUCCESS = lambda x: x
 
-        cmd.handle(backup_file="/backups/test.sql", database="default", mysql_path="mysql")
+        cmd.handle(backup_file="/backups/test.sql", database="default",
+                   mysql_path="mysql", timeout=300, extra_args=[])
 
         assert "2.0s" in out.getvalue()
 
@@ -441,4 +442,5 @@ class TestDrestoreCommand:
         cmd = Command(stdout=out)
 
         with pytest.raises(CommandError, match="Table doesn't exist"):
-            cmd.handle(backup_file="/backups/test.sql", database="default", mysql_path="mysql")
+            cmd.handle(backup_file="/backups/test.sql", database="default",
+                   mysql_path="mysql", timeout=300, extra_args=[])

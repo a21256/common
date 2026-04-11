@@ -20,3 +20,6 @@ Repository = "https://github.com/a21256/common"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["tests"]

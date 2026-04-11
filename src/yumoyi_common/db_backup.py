@@ -39,7 +39,7 @@ EXT_SQL_GZ = ".sql.gz"
 MYSQL_PWD_ENV = "MYSQL_PWD"
 DEFAULT_DUMP_FLAGS = ("--single-transaction", "--routines", "--triggers")
 STDERR_DRAIN_TIMEOUT = 5   # seconds to wait for stderr thread after main I/O completes
-COUNT_TIMEOUT = 5          # per-table SELECT COUNT(*) timeout; falls back to estimate
+DEFAULT_COUNT_TIMEOUT = 5  # per-table SELECT COUNT(*) timeout; falls back to estimate
 
 
 # ==================== Config & Result dataclasses ====================
@@ -166,6 +166,7 @@ def backup_database(
     mysql_path: str = DEFAULT_MYSQL,
     extra_args: Sequence[str] = (),
     collect_metadata: bool = True,
+    count_timeout: int = DEFAULT_COUNT_TIMEOUT,
     tag: str = "",
     **kwargs,
 ) -> BackupResult:
@@ -175,7 +176,9 @@ def backup_database(
     entire dump in memory.
 
     Set ``collect_metadata=False`` to skip post-backup table statistics
-    (saves one round-trip to the database).
+    (saves one round-trip to the database).  ``count_timeout`` controls
+    the per-table ``SELECT COUNT(*)`` timeout in seconds (default 5);
+    increase for large tables if you need exact counts.
 
     ``tag`` is stored in ``BackupResult.metadata.backup_tag`` for audit
     (e.g. ``"manual"``, ``"pre_import_auto"``).
@@ -193,7 +196,8 @@ def backup_database(
         config=config, tables=None, output_dir=output_dir,
         compress=compress, timeout=timeout,
         mysqldump_path=mysqldump_path, mysql_path=mysql_path,
-        extra_args=extra_args, collect_metadata=collect_metadata, tag=tag,
+        extra_args=extra_args, collect_metadata=collect_metadata,
+        count_timeout=count_timeout, tag=tag,
     )
 
 
@@ -208,10 +212,14 @@ def backup_tables(
     mysql_path: str = DEFAULT_MYSQL,
     extra_args: Sequence[str] = (),
     collect_metadata: bool = True,
+    count_timeout: int = DEFAULT_COUNT_TIMEOUT,
     tag: str = "",
     **kwargs,
 ) -> BackupResult:
     """Backup specific tables via mysqldump.
+
+    Tables are sorted for deterministic filenames; ``result.tables``
+    contains the sorted order, not the input order.
 
     Set ``collect_metadata=False`` to skip post-backup table statistics.
 
@@ -230,7 +238,8 @@ def backup_tables(
         config=config, tables=sorted(tables), output_dir=output_dir,
         compress=compress, timeout=timeout,
         mysqldump_path=mysqldump_path, mysql_path=mysql_path,
-        extra_args=extra_args, collect_metadata=collect_metadata, tag=tag,
+        extra_args=extra_args, collect_metadata=collect_metadata,
+        count_timeout=count_timeout, tag=tag,
     )
 
 
@@ -523,6 +532,7 @@ def _collect_metadata(
     tables: Optional[List[str]],
     mysql_path: str,
     timeout: int,
+    count_timeout: int = DEFAULT_COUNT_TIMEOUT,
     tag: str = "",
 ) -> Optional[BackupMetadata]:
     """Collect table statistics after a successful backup.
@@ -534,7 +544,7 @@ def _collect_metadata(
       1. Query information_schema for TABLE_ROWS (estimate), DATA_LENGTH,
          INDEX_LENGTH in a single round-trip.
       2. For each table, run ``SELECT COUNT(*)`` for exact row count.
-         If a single COUNT times out (COUNT_TIMEOUT seconds), fall back
+         If a single COUNT times out (count_timeout seconds), fall back
          to the estimate from step 1 and mark ``estimated=True``.
       3. For table-level backups, collect DDL via SHOW CREATE TABLE.
       4. Aggregate totals and attach ``backup_tag``.
@@ -601,7 +611,7 @@ def _collect_metadata(
             try:
                 count_output = _run_query(
                     f"SELECT COUNT(*) FROM {escaped}",
-                    query_timeout=COUNT_TIMEOUT,
+                    query_timeout=count_timeout,
                 )
                 if count_output is not None:
                     exact_counts[tname] = (_safe_int(count_output), False)
@@ -672,6 +682,7 @@ def _run_backup(
     mysql_path: str,
     extra_args: Sequence[str],
     collect_metadata: bool,
+    count_timeout: int,
     tag: str,
 ) -> BackupResult:
     """Internal: execute mysqldump and stream output to file."""
@@ -749,7 +760,7 @@ def _run_backup(
         if collect_metadata:
             metadata = _collect_metadata(
                 config, tables, mysql_path=mysql_path, timeout=timeout,
-                tag=tag,
+                count_timeout=count_timeout, tag=tag,
             )
 
         return BackupResult(
@@ -820,6 +831,7 @@ def _run_restore(
                 remaining = max(1, timeout - int(time.monotonic() - start))
                 proc.wait(timeout=remaining)
             except BrokenPipeError:
+                logger.info("mysql closed stdin early (BrokenPipeError)")
                 proc.wait()
             except subprocess.TimeoutExpired:
                 proc.kill()

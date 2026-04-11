@@ -791,3 +791,26 @@ class TestCollectMetadata:
         assert result.metadata.table_stats[0].row_count == 105
         assert result.metadata.table_stats[0].estimated is False
         assert result.metadata.total_data_size == 13000
+
+    @patch("yumoyi_common.db_backup.shutil.which", return_value="/usr/bin/mysql")
+    @patch("yumoyi_common.db_backup.subprocess.run")
+    def test_backup_succeeds_when_metadata_fails(self, mock_run, mock_which, tmp_dir):
+        """Core contract: metadata failure must not break a successful backup."""
+        def side_effect(cmd, **kwargs):
+            target = kwargs.get("stdout")
+            if target and hasattr(target, "write"):
+                # mysqldump call: write to file
+                target.write(b"-- dump")
+                proc = MagicMock()
+                proc.returncode = 0
+                proc.stderr = b""
+                return proc
+            # All metadata calls fail
+            return _mock_proc(returncode=1, stderr=b"Access denied")
+
+        mock_run.side_effect = side_effect
+
+        result = backup_database(config=CFG, output_dir=tmp_dir)
+
+        assert result.success is True
+        assert result.metadata is None  # metadata failed, backup still OK
